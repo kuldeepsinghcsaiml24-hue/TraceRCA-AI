@@ -5,11 +5,14 @@ from fastapi import FastAPI
 from .api.routes.health import router as health_router
 from .cache.dependencies import redis_client
 from .core.config import settings
+from .telemetry.tracing import configure_tracing
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown resources."""
+
+    configure_tracing(settings.otel_service_name)
 
     await redis_client.connect()
 

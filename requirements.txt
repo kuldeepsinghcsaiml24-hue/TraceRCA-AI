@@ -9,3 +9,6 @@ httpx
 sqlalchemy
 asyncpg
 redis
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp
