@@ -1,0 +1,23 @@
+[project]
+name = "tracerca-ai"
+version = "0.1.0"
+description = "Distributed OpenTelemetry Multi-Layer Causal Inference & Auto-Healing Engine"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "pydantic-settings",
+    "python-dotenv",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.black]
+line-length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
