@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .api.routes.health import router as health_router
+from .api.routes.telemetry import router as telemetry_router
 from .cache.dependencies import redis_client
 from .core.config import settings
 from .telemetry.tracing import configure_tracing
@@ -32,3 +33,4 @@ app = FastAPI(
 )
 
 app.include_router(health_router)
+app.include_router(telemetry_router)
