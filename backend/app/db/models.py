@@ -37,50 +37,75 @@ class TelemetryEvent(Base):
     __tablename__ = "telemetry_events"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
     event_type: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
         index=True,
     )
+
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         index=True,
     )
+
     service_name: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
         index=True,
     )
+
     trace_id: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
         index=True,
     )
+
     span_id: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
         index=True,
     )
+
     parent_span_id: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
     )
+
+    operation_name: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    duration_ms: Mapped[float | None] = mapped_column(
+        nullable=True,
+    )
+
+    status: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
     message: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
     )
+
     metric_name: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
     )
+
     metric_value: Mapped[float | None] = mapped_column(
         nullable=True,
     )
+
     attributes: Mapped[dict | None] = mapped_column(
         JSON,
         nullable=True,
     )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=datetime.utcnow,

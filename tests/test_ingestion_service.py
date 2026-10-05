@@ -92,3 +92,39 @@ async def test_ingest_trace_rolls_back_on_database_error():
         await ingest_trace(db, data)
 
     db.rollback.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_ingest_log_rolls_back_on_database_error():
+    db = MagicMock()
+    db.commit = AsyncMock(side_effect=SQLAlchemyError("database failure"))
+    db.rollback = AsyncMock()
+
+    data = LogIngestRequest(
+        timestamp=datetime.now(timezone.utc),
+        service_name="test-service",
+        message="M5.9 log rollback test",
+    )
+
+    with pytest.raises(SQLAlchemyError, match="database failure"):
+        await ingest_log(db, data)
+
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ingest_metric_rolls_back_on_database_error():
+    db = MagicMock()
+    db.commit = AsyncMock(side_effect=SQLAlchemyError("database failure"))
+    db.rollback = AsyncMock()
+
+    data = MetricIngestRequest(
+        timestamp=datetime.now(timezone.utc),
+        service_name="test-service",
+        metric_name="m59_rollback_cpu",
+        metric_value=75.5,
+    )
+
+    with pytest.raises(SQLAlchemyError, match="database failure"):
+        await ingest_metric(db, data)
+
+    db.rollback.assert_awaited_once()

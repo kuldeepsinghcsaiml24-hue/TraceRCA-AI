@@ -194,6 +194,49 @@ Validation is enforced with Pydantic. Whitespace-only values are rejected for im
 
 Invalid requests return `422 Unprocessable Entity`.
 
+### M6.1 — Inspect M5 Output and Freeze Normalization Contract
+
+**Status: 🔄 In Progress**
+
+Inspected the telemetry data produced by M5 and compared the ingestion schemas, SQLAlchemy models, and actual PostgreSQL database structure.
+
+#### Findings
+
+The existing `telemetry_events` table successfully stored:
+
+- `event_type`
+- `timestamp`
+- `service_name`
+- `trace_id`
+- `span_id`
+- `parent_span_id`
+- `message`
+- `metric_name`
+- `metric_value`
+- `attributes`
+- `created_at`
+
+However, the trace ingestion schema already contained three important fields that were not being persisted in the database:
+
+- `operation_name`
+- `duration_ms`
+- `status`
+
+These fields are important for the later RCA pipeline because they provide:
+
+- **operation_name** → identifies the failing or slow operation
+- **duration_ms** → enables latency and performance analysis
+- **status** → enables error/failure detection
+
+#### Schema Update
+
+Updated the `TelemetryEvent` SQLAlchemy model with:
+
+```text
+operation_name VARCHAR(255)
+duration_ms FLOAT
+status VARCHAR(50)
+
 #### Database Error Handling
 
 The ingestion service handles SQLAlchemy errors and operating-system/database connection errors. On failure it:
