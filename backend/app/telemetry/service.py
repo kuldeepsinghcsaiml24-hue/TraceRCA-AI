@@ -21,6 +21,9 @@ async def ingest_trace(
         trace_id=data.trace_id,
         span_id=data.span_id,
         parent_span_id=data.parent_span_id,
+        operation_name=data.operation_name,
+        duration_ms=data.duration_ms,
+        status=data.status,
         attributes=data.attributes,
     )
 

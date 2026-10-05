@@ -237,6 +237,24 @@ operation_name VARCHAR(255)
 duration_ms FLOAT
 status VARCHAR(50)
 
+Database Migration
+Generated and applied Alembic migration:
+c0ebede2393f_add_trace_fields_to_telemetry_events.py
+
+Migration:
+ce12331ef2cd → c0ebede2393f
+
+PostgreSQL verification confirmed that the three new columns are present in telemetry_events.
+Verification
+Existing log and metric records were checked after migration.
+The new fields correctly appear as:
+operation_name = None
+duration_ms = None
+status = None
+
+for historical records created before the schema update.
+Remaining work: Update the trace ingestion service so new trace events persist operation_name, duration_ms, and status.
+
 #### Database Error Handling
 
 The ingestion service handles SQLAlchemy errors and operating-system/database connection errors. On failure it:
@@ -287,6 +305,11 @@ pytest -q tests/test_ingestion_service.py tests/test_telemetry_api.py
 **16 tests passed.** This confirmed that schema validation works for traces, logs, and metrics; that database errors are handled and rolled back at the service layer; that all endpoints return the same 500 response on persistence failure; and that existing ingestion functionality is unaffected.
 
 ---
+
+
+pytest -q tests/test_ingestion_service.py tests/test_telemetry_integration.py
+
+**7 tests passed.** This confirmed that the updated trace ingestion service correctly persists operation_name, duration_ms, and status; that existing log and metric ingestion functionality remains unaffected; and that the OpenTelemetry trace successfully flows through the ingestion pipeline and is persisted to PostgreSQL.
 
 ## Project Structure
 
