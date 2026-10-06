@@ -296,6 +296,379 @@ HTTP/1.1 500 Internal Server Error
 - [x] M5.8.9 Verify consistent API error responses
 - [x] M5.8.10 Run final verification
 
+
+
+M6.2
+  │
+  ├── 1. Design normalized fields
+  ├── 2. Decide data types
+  ├── 3. Decide optional/required fields
+  ├── 4. Define event-type behavior
+  └── 5. Freeze the schema contract
+
+  Define Normalized Telemetry Schema
+This is our next step.
+Goal
+We will define one common internal schema that all three telemetry types will eventually follow:
+Trace ──┐
+Log   ──┼──> NormalizedTelemetry
+Metric ─┘
+
+Instead of letting the RCA engine deal with three different raw formats, it will receive a predictable structure.
+What we'll define
+For M6.2, we'll decide the normalized representation for:
+1. Identity
+   - event_id
+   - event_type
+2. Timing
+   - timestamp
+   - duration_ms
+3. Service information
+   - service_name
+   - operation_name
+4. Distributed tracing
+   - trace_id
+   - span_id
+   - parent_span_id
+5. Status
+   - status
+6. Payload
+   - message
+   - metric_name
+   - metric_value
+7. Metadata
+   - attributes
+The important thing is that we won't code yet.
+First we'll freeze the contract: field → type → required/optional → meaning → which telemetry types use it.
+
+
+NormalizedTelemetry
+│
+├── event_id           UUID                 required
+├── event_type         trace/log/metric     required
+├── timestamp          datetime             required
+├── service_name       string               required
+│
+├── operation_name     string | None
+├── trace_id           string | None
+├── span_id            string | None
+├── parent_span_id     string | None
+├── duration_ms        float | None
+├── status             UNSET/OK/ERROR | None
+│
+├── message            string | None
+├── metric_name        string | None
+├── metric_value       float | None
+│
+└── attributes         dict[str, Any]       required
+
+
+So the architecture becomes:
+Raw M5 Telemetry
+       ↓
+PostgreSQL TelemetryEvent
+       ↓
+M6 Normalization
+       ↓
+NormalizedTelemetry
+       ↓
+Future RCA / Correlation / Causal Analysis
+
+for normalized schmma for traces metrics and log 
+Validation tests
+Now we need to make sure the schema rejects invalid data, not just accepts valid data.
+We'll test:
+1. Invalid event_type
+2. Negative duration_ms
+3. Empty service_name
+4. Invalid status
+5. Empty message
+
+
+M6.2 — Define Normalized Telemetry Schema
+
+M6.2.1  Design normalized fields              ✅
+M6.2.2  Define validation rules               ✅
+M6.2.3  Implement NormalizedTelemetry         ✅
+M6.2.4  Verify schema                         ✅
+M6.2.5  Add validation tests                  ✅
+
+
+Instead of creating three completely separate normalized schemas:
+TraceNormalizedSchema
+LogNormalizedSchema
+MetricNormalizedSchema
+
+we created one common normalized schema:
+              NormalizedTelemetry
+               /       |       \
+            Trace      Log     Metric
+
+This gives the later RCA pipeline one predictable structure to work with.
+And yes, we added validation
+The schema checks things such as:
+- event_type → must be trace, log, or metric
+- service_name → required and cannot be empty/whitespace
+- duration_ms → cannot be negative
+- status → must be UNSET, OK, or ERROR
+- message → cannot be empty if provided
+- metric_name → string with length limits
+- IDs → optional strings with length limits
+- attributes → dictionary
+For example:
+duration_ms = -10
+       ↓
+    ❌ rejected
+
+and:
+event_type = "something_else"
+       ↓
+    ❌ rejected
+
+One important correction
+You said "instead of creating multiple schemas for the raw telemetry data".
+More precisely:
+M5 already has separate schemas for RAW ingestion:
+TraceIngestRequest
+LogIngestRequest
+MetricIngestRequest
+
+We didn't remove those.
+Instead, M6 introduces one common schema AFTER ingestion:
+                 M5
+                  ↓
+       ┌──────────┼──────────┐
+       ↓          ↓          ↓
+     Trace       Log       Metric
+     Schema      Schema     Schema
+       │          │          │
+       └──────────┼──────────┘
+                  ↓
+                 M6
+                  ↓
+       NormalizedTelemetry
+                  ↓
+          RCA / Correlation
+
+So the key idea is:
+Different raw input formats → one common normalized internal format → downstream RCA components.
+
+
+✅ M6.2 is now functionally complete.
+9 passed in 0.36s
+
+What those 9 tests confirmed
+- ✅ Valid NormalizedTelemetry objects are accepted
+- ✅ Invalid event_type is rejected
+- ✅ Negative duration_ms is rejected
+- ✅ Empty service_name is rejected
+- ✅ Invalid status is rejected
+- ✅ Empty message is rejected
+- ✅ Trace telemetry fits the common schema
+- ✅ Log telemetry fits the common schema
+- ✅ Metric telemetry fits the common schema
+
+Telemetry Normalization
+Total: 8 major steps
+Step	Work	Status
+M6.1	Inspect M5 output and freeze normalization contract	✅ Complete
+M6.2	Define normalized telemetry schema	✅ Complete
+M6.3	Implement trace normalization	⏳ Next
+M6.4	Implement log normalization	⏳
+M6.5	Implement metric normalization	⏳
+M6.6	Implement normalization service/pipeline	⏳
+M6.7	Add normalization tests	⏳
+M6.8	Final verification + README closeout	⏳
+
+
+What each remaining step means
+M6.3 — Trace Normalization
+Raw Trace
+   ↓
+TraceIngestRequest / DB event
+   ↓
+Trace Normalizer
+   ↓
+NormalizedTelemetry
+
+We'll convert the raw trace fields into our common format.
+M6.4 — Log Normalization
+Raw Log
+   ↓
+Log Normalizer
+   ↓
+NormalizedTelemetry
+
+M6.5 — Metric Normalization
+Raw Metric
+   ↓
+Metric Normalizer
+   ↓
+NormalizedTelemetry
+
+M6.6 — Normalization Service/Pipeline
+We'll create the central component that determines:
+event_type
+    ↓
+trace → trace normalizer
+log   → log normalizer
+metric → metric normalizer
+    ↓
+NormalizedTelemetry
+
+M6.7 — Normalization Tests
+We'll test the actual normalization process, not just the Pydantic schema.
+For example:
+Raw Trace
+   ↓
+normalize_trace()
+   ↓
+NormalizedTelemetry
+   ↓
+verify every field
+
+Same for logs and metrics.
+M6.8 — Final Verification + README
+We'll run the complete test suite, verify the normalization pipeline, update the README, and create the final M6 Git checkpoint.
+Overall M6 architecture
+                 M5 RAW TELEMETRY
+                       │
+          ┌────────────┼────────────┐
+          ↓            ↓            ↓
+        Trace         Log         Metric
+          │            │            │
+          ↓            ↓            ↓
+     M6.3           M6.4         M6.5
+     Normalize      Normalize    Normalize
+          │            │            │
+          └────────────┼────────────┘
+                       ↓
+              NormalizedTelemetry
+                       │
+                       ↓
+              M6.6 Normalization
+                  Service/Pipeline
+                       │
+                       ↓
+                  M6.7 Tests
+                       │
+                       ↓
+                  M6.8 Closeout
+
+So M6 has 8 major steps, and you've completed 2/8.
+
+Implement Trace Normalization. 🚀
+M6.3 goal
+We currently have:
+Raw Trace
+   ↓
+TraceIngestRequest
+   ↓
+PostgreSQL TelemetryEvent
+
+Now we need:
+TelemetryEvent
+      ↓
+Trace Normalizer
+      ↓
+NormalizedTelemetry
+
+The important point is that we are not changing the database again. We already have the fields we need from M6.1.
+M6.3 will have these small steps
+Step	Task
+M6.3.1	Design the trace normalization mapping
+M6.3.2	Implement normalize_trace()
+M6.3.3	Verify normalized trace output
+M6.3.4	Test edge cases
+M6.3.5	Complete M6.3 and checkpoint
+
+
+First: M6.3.1 — Trace mapping
+Our mapping will be:
+TelemetryEvent              NormalizedTelemetry
+────────────────────────────────────────────────
+id                    →     event_id
+event_type            →     event_type
+timestamp             →     timestamp
+service_name          →     service_name
+operation_name        →     operation_name
+trace_id              →     trace_id
+span_id               →     span_id
+parent_span_id        →     parent_span_id
+duration_ms           →     duration_ms
+status                →     status
+attributes             →     attributes
+
+Fields such as:
+message
+metric_name
+metric_value
+
+will remain:
+None
+
+
+because they aren't applicable to a trace.
+So a database record like:
+service_name  = payment-service
+operation     = process-payment
+duration      = 245.5
+status        = ERROR
+trace_id      = abc123
+span_id       = span456
+
+becomes:
+NormalizedTelemetry(
+    event_type="trace",
+    service_name="payment-service",
+    operation_name="process-payment",
+    duration_ms=245.5,
+    status="ERROR",
+    trace_id="abc123",
+    span_id="span456",
+)
+
+What this function does
+It takes:
+TelemetryEvent
+
+and produces:
+NormalizedTelemetry
+
+The transformation is essentially:
+Database Trace
+      │
+      │ normalize_trace()
+      ↓
+NormalizedTelemetry
+
+Why this check is important
+We added:
+if event.event_type != "trace":    raise ValueError("Expected a trace telemetry event")
+
+
+This prevents us from accidentally passing a log or metric into the trace normalizer.
+For example:
+Log event
+   ↓
+normalize_trace()
+   ↓
+❌ ValueError
+
+while:
+Trace event
+   ↓
+normalize_trace()
+   ↓
+✅ NormalizedTelemetry
+
+**#### Verification Result**
+
+```bash
+pytest -q tests/test_trace_normalizer.py tests/test_normalized_telemetry.py
+
+**13 tests passed.** This confirmed that trace telemetry is correctly transformed from the persisted TelemetryEvent representation into the common NormalizedTelemetry structure; that all trace fields are preserved; that non-trace events are rejected by the trace normalizer; and that missing optional fields and attributes are handled safely.
+---
 #### Verification Result
 
 ```bash
