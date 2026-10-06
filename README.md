@@ -24,6 +24,15 @@ TraceRCA AI is an observability and root-cause-analysis (RCA) platform for distr
   - [Metric Normalization](#metric-normalization)
   - [Normalization Service / Pipeline](#normalization-service--pipeline)
   - [Normalization Roadmap](#normalization-roadmap)
+- [Telemetry Correlation](#telemetry-correlation)
+  - [Why Correlation Matters](#why-correlation-matters)
+  - [Correlation Contract & Identifiers](#correlation-contract--identifiers)
+  - [Correlation Rules](#correlation-rules)
+  - [Trace–Log Correlation](#tracelog-correlation)
+  - [Trace–Metric Correlation](#tracemetric-correlation)
+  - [Time / Service-Based Correlation](#time--service-based-correlation)
+  - [Unified Correlation Service / Pipeline](#unified-correlation-service--pipeline)
+  - [Correlation Roadmap](#correlation-roadmap)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
 - [Testing](#testing)
@@ -138,7 +147,7 @@ flowchart TD
 
 | Part | Status |
 |---|---|
-| Part 1 — Observability Foundation | 🔄 In progress — ingestion complete, normalization underway |
+| Part 1 — Observability Foundation | 🔄 In progress — ingestion, normalization, and correlation complete |
 | Part 2 — AI Root Cause Intelligence | ⏳ Planned |
 | Part 3 — Auto-Healing & Production | ⏳ Planned |
 
@@ -149,7 +158,8 @@ flowchart TD
 | Telemetry Ingestion API | ✅ Complete |
 | OpenTelemetry Integration | ✅ Complete |
 | Database Schema Evolution (trace fields) | ✅ Complete |
-| Telemetry Normalization | 🔄 In progress — normalizers and pipeline complete, final closeout pending |
+| Telemetry Normalization | ✅ Complete |
+| Telemetry Correlation | ✅ Complete |
 
 ---
 
@@ -351,7 +361,7 @@ pytest -q tests/test_ingestion_service.py tests/test_telemetry_integration.py
 
 ## Telemetry Normalization
 
-**Status:** 🔄 In progress
+**Status:** ✅ Complete
 
 ### Why Normalization Matters
 
@@ -658,8 +668,188 @@ flowchart TD
 | Log normalization | ✅ Complete |
 | Metric normalization | ✅ Complete |
 | Normalization service / pipeline | ✅ Complete |
-| Pipeline-level normalization tests | ⏳ Planned |
-| Final verification & documentation closeout | ⏳ Planned |
+| Pipeline-level normalization tests | ✅ Complete |
+| Final verification & documentation closeout | ✅ Complete |
+
+### Final Verification
+
+```text
+30 passed
+```
+
+The complete normalization test suite — common schema validation, trace normalization, log normalization, metric normalization, and the unified `normalize_event()` pipeline — passes together. Telemetry Normalization is fully complete:
+
+```mermaid
+flowchart TD
+    ING[Telemetry Ingestion] --> EV[TelemetryEvent]
+    EV --> NORM[Telemetry Normalization]
+    NORM --> T[Trace]
+    NORM --> L[Log]
+    NORM --> M[Metric]
+    T --> NT[NormalizedTelemetry]
+    L --> NT
+    M --> NT
+    NT --> CORR[Telemetry Correlation]
+    CORR --> RCA[RCA / Causal Analysis]
+```
+
+---
+
+## Telemetry Correlation
+
+**Status:** ✅ Complete
+
+### Why Correlation Matters
+
+A single incident can surface as several unrelated-looking telemetry events:
+
+```text
+10:00:01  Trace  → payment-service → process-payment → ERROR
+10:00:01  Log    → payment-service → "Database timeout"
+10:00:02  Metric → payment-service → CPU = 95%
+```
+
+These are three separate events, but they likely belong to the same incident. Normalization tells us what each event looks like; correlation tells us which events belong together.
+
+```mermaid
+flowchart TD
+    T[Trace] -- related --> L[Log]
+    T -- related --> M[Metric]
+    L --> OUT[Correlated Events]
+    M --> OUT
+    OUT --> RCA[Future RCA Engine]
+```
+
+### Correlation Contract & Identifiers
+
+Correlation is built on top of `NormalizedTelemetry`, using four of its fields as correlation identifiers:
+
+| Identifier | Strength | Purpose |
+|---|---|---|
+| `trace_id` | 🟢 Strong | Same distributed request |
+| `span_id` | 🟢 Strong | Same operation / span |
+| `service_name` | 🟡 Medium | Same microservice |
+| `timestamp` | 🟡 Medium | Events happened near each other |
+
+`event_id` is used only to uniquely identify an event — it never establishes correlation on its own.
+
+### Correlation Rules
+
+Each pair of events is scored against a fixed set of rules rather than treated as a simple match/no-match:
+
+| Match | Strength |
+|---|---|
+| Same `trace_id` + same `span_id` | `VERY_STRONG` |
+| Same `trace_id` | `STRONG` |
+| Same `service_name` + within 5 seconds | `MEDIUM` |
+| No matching rule | No correlation |
+
+Giving correlations a strength — rather than a boolean — matters because later causal analysis can weight stronger relationships more heavily than weaker ones.
+
+Every match produces a `CorrelationResult` describing the relationship rather than modifying either event:
+
+```text
+Event A ──────── correlation ──────── Event B
+                     │
+                     ├─ type
+                     ├─ strength
+                     └─ reason
+```
+
+### Trace–Log Correlation
+
+The first and strongest practical rule: a trace and a log are correlated when they share the same `trace_id`.
+
+```text
+Trace:  trace_id = abc123, service = payment-service, operation = process-payment, status = ERROR
+Log:    trace_id = abc123, service = payment-service, message = "Database connection timeout"
+```
+
+These two events are correlated because they belong to the same trace. Test coverage includes: matching `trace_id` → `STRONG`; differing `trace_id` → no correlation; missing `trace_id` → no trace-ID correlation.
+
+### Trace–Metric Correlation
+
+A metric doesn't carry a `trace_id`, so trace–metric correlation instead uses the service + time rule:
+
+```text
+trace.service_name == metric.service_name
+AND
+|trace.timestamp - metric.timestamp| <= 5 seconds
+```
+
+```text
+Trace:   service = payment-service, time = 10:00:01
+Metric:  service = payment-service, time = 10:00:04, CPU = 95%
+```
+
+A 3-second gap on the same service → `MEDIUM` correlation. Events on different services, or more than 5 seconds apart, are not correlated by this rule. No schema changes were needed — `service_name`, `timestamp`, and `event_id` on `NormalizedTelemetry` are sufficient.
+
+### Time / Service-Based Correlation
+
+The service + time rule was generalized into a single reusable function rather than being specific to trace–metric pairs:
+
+```mermaid
+flowchart TD
+    A[Event A] --> C{Same service_name?}
+    C -- No --> N[No correlation]
+    C -- Yes --> D{"Within 5 seconds?"}
+    D -- No --> N
+    D -- Yes --> R["MEDIUM correlation"]
+```
+
+This single function now covers trace↔log, trace↔metric, log↔metric, and metric↔metric pairs — anywhere two events share a service and occur within 5 seconds of each other.
+
+### Unified Correlation Service / Pipeline
+
+With trace–log, trace–metric, and generic service/time correlation implemented separately, a single entry point was added on top of them:
+
+```python
+def correlate_events(
+    events: list[NormalizedTelemetry],
+) -> list[CorrelationResult]:
+    ...
+```
+
+It takes a list of normalized telemetry events and returns every valid correlation among them, applying the rules in order of strength:
+
+| Situation | Rule | Strength |
+|---|---|---|
+| Trace + Log, same `trace_id` | Trace-ID match | `STRONG` |
+| Trace + Metric | Same service + ≤ 5 sec | `MEDIUM` |
+| Any compatible events | Same service + ≤ 5 sec | `MEDIUM` |
+
+The service never modifies the telemetry events it's given — it only produces relationships between them:
+
+```mermaid
+flowchart TD
+    IN["NormalizedTelemetry[]"] --> SVC[Correlation Service]
+    SVC --> TL["Trace ↔ Log"]
+    SVC --> TM["Trace ↔ Metric"]
+    SVC --> ST["Service + Time"]
+    TL --> OUT["CorrelationResult[]"]
+    TM --> OUT
+    ST --> OUT
+```
+
+### Correlation Roadmap
+
+| Task | Status |
+|---|---|
+| Inspect normalized telemetry and freeze correlation contract | ✅ Complete |
+| Define correlation identifiers and matching rules | ✅ Complete |
+| Trace–log correlation | ✅ Complete |
+| Trace–metric correlation | ✅ Complete |
+| Time / service-based correlation | ✅ Complete |
+| Unified correlation service / pipeline | ✅ Complete |
+| Correlation tests, final verification & documentation closeout | ✅ Complete |
+
+### Final Verification
+
+```text
+23 passed
+```
+
+This confirmed trace–log correlation via `trace_id` (and the stronger `trace_id` + `span_id` match), trace–metric correlation via service and time proximity, the generic service/time rule, and the unified correlation service all work correctly together.
 
 ---
 
@@ -701,7 +891,10 @@ TraceRCA-AI/
 │   ├── test_telemetry_integration.py
 │   ├── test_normalized_telemetry.py
 │   ├── test_trace_normalizer.py
-│   └── test_log_normalizer.py
+│   ├── test_log_normalizer.py
+│   ├── test_metric_normalizer.py
+│   ├── test_normalization_service.py
+│   └── test_correlation.py
 ├── docs/
 ├── scripts/
 ├── .env.example
