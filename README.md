@@ -13,7 +13,17 @@ TraceRCA AI is an observability and root-cause-analysis (RCA) platform for distr
 - [Project Vision](#project-vision)
 - [Architecture](#architecture)
 - [Project Status](#project-status)
-- [M5 — Telemetry Ingestion API](#m5--telemetry-ingestion-api)
+- [Telemetry Ingestion API](#telemetry-ingestion-api)
+- [OpenTelemetry Integration](#opentelemetry-integration)
+- [Database Schema Evolution](#database-schema-evolution)
+- [Telemetry Normalization](#telemetry-normalization)
+  - [Why Normalization Matters](#why-normalization-matters)
+  - [Normalized Telemetry Schema](#normalized-telemetry-schema)
+  - [Trace Normalization](#trace-normalization)
+  - [Log Normalization](#log-normalization)
+  - [Metric Normalization](#metric-normalization)
+  - [Normalization Service / Pipeline](#normalization-service--pipeline)
+  - [Normalization Roadmap](#normalization-roadmap)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
 - [Testing](#testing)
@@ -128,17 +138,26 @@ flowchart TD
 
 | Part | Status |
 |---|---|
-| Part 1 — Observability Foundation | 🔄 In progress (currently on M5) |
+| Part 1 — Observability Foundation | 🔄 In progress — ingestion complete, normalization underway |
 | Part 2 — AI Root Cause Intelligence | ⏳ Planned |
 | Part 3 — Auto-Healing & Production | ⏳ Planned |
 
+### Part 1 Workstreams
+
+| Workstream | Status |
+|---|---|
+| Telemetry Ingestion API | ✅ Complete |
+| OpenTelemetry Integration | ✅ Complete |
+| Database Schema Evolution (trace fields) | ✅ Complete |
+| Telemetry Normalization | 🔄 In progress — normalizers and pipeline complete, final closeout pending |
+
 ---
 
-## M5 — Telemetry Ingestion API
-
-**Status:** 🔄 In progress
+## Telemetry Ingestion API
 
 The Telemetry Ingestion API is the entry point for telemetry from OpenTelemetry-enabled services. It validates incoming data, converts it into the internal `TelemetryEvent` model, and persists it to PostgreSQL.
+
+**Status:** ✅ Complete
 
 ### Endpoints
 
@@ -163,26 +182,20 @@ flowchart TD
     H --> E500[500 Internal Server Error]
 ```
 
-### Milestone Progress
+### Build Checklist
 
-| Step | Description | Status |
-|---|---|---|
-| M5.1 | Inspect M4 and freeze telemetry contracts | ✅ Complete |
-| M5.2 | Create Pydantic telemetry ingestion schemas | ✅ Complete |
-| M5.3 | Implement telemetry ingestion service | ✅ Complete |
-| M5.4 | Implement `POST /telemetry/traces` | ✅ Complete |
-| M5.5 | Implement `POST /telemetry/logs` | ✅ Complete |
-| M5.6 | Implement `POST /telemetry/metrics` | ✅ Complete |
-| M5.7 | Connect ingestion service to PostgreSQL and add tests | ✅ Complete |
-| M5.8 | Error handling and validation | ✅ Complete |
-| M5.9 | Unit and API tests | ⏳ Pending |
-| M5.10 | OpenTelemetry integration test | ⏳ Pending |
+- [x] Freeze telemetry contracts
+- [x] Create Pydantic telemetry ingestion schemas
+- [x] Implement telemetry ingestion service
+- [x] Implement `POST /telemetry/traces`
+- [x] Implement `POST /telemetry/logs`
+- [x] Implement `POST /telemetry/metrics`
+- [x] Connect ingestion service to PostgreSQL
+- [x] Error handling and validation
+- [x] Unit and API tests
+- [x] OpenTelemetry integration test
 
-### M5.8 — Error Handling & Validation
-
-M5.8 adds schema validation, service-level error handling, API-level exception handling, and consistent error responses across all three endpoints.
-
-#### Schema Validation
+### Validation Rules
 
 Validation is enforced with Pydantic. Whitespace-only values are rejected for important string fields, maximum lengths are enforced on identifiers and messages, and flexible OpenTelemetry attributes are preserved.
 
@@ -194,76 +207,13 @@ Validation is enforced with Pydantic. Whitespace-only values are rejected for im
 
 Invalid requests return `422 Unprocessable Entity`.
 
-### M6.1 — Inspect M5 Output and Freeze Normalization Contract
-
-**Status: 🔄 In Progress**
-
-Inspected the telemetry data produced by M5 and compared the ingestion schemas, SQLAlchemy models, and actual PostgreSQL database structure.
-
-#### Findings
-
-The existing `telemetry_events` table successfully stored:
-
-- `event_type`
-- `timestamp`
-- `service_name`
-- `trace_id`
-- `span_id`
-- `parent_span_id`
-- `message`
-- `metric_name`
-- `metric_value`
-- `attributes`
-- `created_at`
-
-However, the trace ingestion schema already contained three important fields that were not being persisted in the database:
-
-- `operation_name`
-- `duration_ms`
-- `status`
-
-These fields are important for the later RCA pipeline because they provide:
-
-- **operation_name** → identifies the failing or slow operation
-- **duration_ms** → enables latency and performance analysis
-- **status** → enables error/failure detection
-
-#### Schema Update
-
-Updated the `TelemetryEvent` SQLAlchemy model with:
-
-```text
-operation_name VARCHAR(255)
-duration_ms FLOAT
-status VARCHAR(50)
-
-Database Migration
-Generated and applied Alembic migration:
-c0ebede2393f_add_trace_fields_to_telemetry_events.py
-
-Migration:
-ce12331ef2cd → c0ebede2393f
-
-PostgreSQL verification confirmed that the three new columns are present in telemetry_events.
-Verification
-Existing log and metric records were checked after migration.
-The new fields correctly appear as:
-operation_name = None
-duration_ms = None
-status = None
-
-for historical records created before the schema update.
-Remaining work: Update the trace ingestion service so new trace events persist operation_name, duration_ms, and status.
-
-#### Database Error Handling
+### Error Handling
 
 The ingestion service handles SQLAlchemy errors and operating-system/database connection errors. On failure it:
 
 1. Rolls back the active transaction, so no partial writes are left behind.
 2. Re-raises the original exception.
 3. Lets the API layer translate it into a consistent client response, without exposing internal database details.
-
-#### Error Response Contract
 
 All three endpoints return the same structure on persistence failure:
 
@@ -283,341 +233,241 @@ HTTP/1.1 500 Internal Server Error
 | Invalid request payload | `422 Unprocessable Entity` |
 | Database / persistence failure | `500 Internal Server Error` |
 
-#### M5.8 Checklist
+### Testing & Verification
 
-- [x] M5.8.1 Inspect current validation and error behavior
-- [x] M5.8.2 Strengthen Pydantic schema validation
-- [x] M5.8.3 Add service-level database error handling
-- [x] M5.8.4 Add API-level exception handling
-- [x] M5.8.5 Test invalid trace requests
-- [x] M5.8.6 Test invalid log requests
-- [x] M5.8.7 Test invalid metric requests
-- [x] M5.8.8 Test database failure handling
-- [x] M5.8.9 Verify consistent API error responses
-- [x] M5.8.10 Run final verification
+Coverage includes trace, log, and metric persistence; successful and invalid API requests for all three telemetry types; and database failure / transaction rollback handling. API success-path tests isolate the HTTP contract from real persistence, while the ingestion service tests verify actual PostgreSQL writes.
 
+```bash
+pytest -q tests/test_ingestion_service.py tests/test_telemetry_api.py
+```
 
+**16 tests passed** — schema validation works for traces, logs, and metrics; database errors are handled and rolled back at the service layer; all endpoints return a consistent `500` on persistence failure; existing ingestion functionality is unaffected.
 
-M6.2
-  │
-  ├── 1. Design normalized fields
-  ├── 2. Decide data types
-  ├── 3. Decide optional/required fields
-  ├── 4. Define event-type behavior
-  └── 5. Freeze the schema contract
+---
 
-  Define Normalized Telemetry Schema
-This is our next step.
-Goal
-We will define one common internal schema that all three telemetry types will eventually follow:
-Trace ──┐
-Log   ──┼──> NormalizedTelemetry
-Metric ─┘
+## OpenTelemetry Integration
 
-Instead of letting the RCA engine deal with three different raw formats, it will receive a predictable structure.
-What we'll define
-For M6.2, we'll decide the normalized representation for:
-1. Identity
-   - event_id
-   - event_type
-2. Timing
-   - timestamp
-   - duration_ms
-3. Service information
-   - service_name
-   - operation_name
-4. Distributed tracing
-   - trace_id
-   - span_id
-   - parent_span_id
-5. Status
-   - status
-6. Payload
-   - message
-   - metric_name
-   - metric_value
-7. Metadata
-   - attributes
-The important thing is that we won't code yet.
-First we'll freeze the contract: field → type → required/optional → meaning → which telemetry types use it.
+**Status:** ✅ Complete
 
+This verifies the complete telemetry flow from an OpenTelemetry span through to PostgreSQL, using the real ingestion service and a real database rather than mocking persistence.
 
-NormalizedTelemetry
-│
-├── event_id           UUID                 required
-├── event_type         trace/log/metric     required
-├── timestamp          datetime             required
-├── service_name       string               required
-│
-├── operation_name     string | None
-├── trace_id           string | None
-├── span_id            string | None
-├── parent_span_id     string | None
-├── duration_ms        float | None
-├── status             UNSET/OK/ERROR | None
-│
-├── message            string | None
-├── metric_name        string | None
-├── metric_value       float | None
-│
-└── attributes         dict[str, Any]       required
+```mermaid
+flowchart TD
+    SP[OpenTelemetry Span] --> CTS[create_telemetry_span]
+    CTS --> TS[TelemetrySpan]
+    TS --> TIR[TraceIngestRequest]
+    TIR --> IT[ingest_trace]
+    IT --> PG[(PostgreSQL)]
+    PG --> EV[TelemetryEvent]
+```
 
+This confirms that the OpenTelemetry foundation feeds correctly into the telemetry ingestion pipeline.
 
-So the architecture becomes:
-Raw M5 Telemetry
-       ↓
-PostgreSQL TelemetryEvent
-       ↓
-M6 Normalization
-       ↓
-NormalizedTelemetry
-       ↓
-Future RCA / Correlation / Causal Analysis
+### Verification
 
-for normalized schmma for traces metrics and log 
-Validation tests
-Now we need to make sure the schema rejects invalid data, not just accepts valid data.
-We'll test:
-1. Invalid event_type
-2. Negative duration_ms
-3. Empty service_name
-4. Invalid status
-5. Empty message
+| Test run | Result |
+|---|---|
+| Full project test suite | 28 passed |
+| OpenTelemetry integration test (standalone) | 1 passed |
+| Existing OpenTelemetry tests + integration test | 3 passed |
 
+### Output
 
-M6.2 — Define Normalized Telemetry Schema
+```mermaid
+flowchart TD
+    TS[Telemetry Sources] --> OT[OpenTelemetry / API]
+    OT --> ING[Telemetry Ingestion]
+    ING --> VAL[Validation]
+    VAL --> EV[Normalization-ready TelemetryEvent]
+    EV --> PG[(PostgreSQL Storage)]
+```
 
-M6.2.1  Design normalized fields              ✅
-M6.2.2  Define validation rules               ✅
-M6.2.3  Implement NormalizedTelemetry         ✅
-M6.2.4  Verify schema                         ✅
-M6.2.5  Add validation tests                  ✅
+This output is the input boundary for telemetry normalization:
 
+```mermaid
+flowchart LR
+    ING[Telemetry Ingestion API] --> NORM[Telemetry Normalization]
+```
 
-Instead of creating three completely separate normalized schemas:
-TraceNormalizedSchema
-LogNormalizedSchema
-MetricNormalizedSchema
+---
 
-we created one common normalized schema:
-              NormalizedTelemetry
-               /       |       \
-            Trace      Log     Metric
+## Database Schema Evolution
 
-This gives the later RCA pipeline one predictable structure to work with.
-And yes, we added validation
-The schema checks things such as:
-- event_type → must be trace, log, or metric
-- service_name → required and cannot be empty/whitespace
-- duration_ms → cannot be negative
-- status → must be UNSET, OK, or ERROR
-- message → cannot be empty if provided
-- metric_name → string with length limits
-- IDs → optional strings with length limits
-- attributes → dictionary
-For example:
-duration_ms = -10
-       ↓
-    ❌ rejected
+**Status:** ✅ Complete
 
-and:
-event_type = "something_else"
-       ↓
-    ❌ rejected
+Inspected the telemetry data produced by ingestion and compared the ingestion schemas, SQLAlchemy models, and the actual PostgreSQL table structure.
 
-One important correction
-You said "instead of creating multiple schemas for the raw telemetry data".
-More precisely:
-M5 already has separate schemas for RAW ingestion:
-TraceIngestRequest
-LogIngestRequest
-MetricIngestRequest
+### Findings
 
-We didn't remove those.
-Instead, M6 introduces one common schema AFTER ingestion:
-                 M5
-                  ↓
-       ┌──────────┼──────────┐
-       ↓          ↓          ↓
-     Trace       Log       Metric
-     Schema      Schema     Schema
-       │          │          │
-       └──────────┼──────────┘
-                  ↓
-                 M6
-                  ↓
-       NormalizedTelemetry
-                  ↓
-          RCA / Correlation
+The `telemetry_events` table already stored:
 
-So the key idea is:
-Different raw input formats → one common normalized internal format → downstream RCA components.
+`event_type`, `timestamp`, `service_name`, `trace_id`, `span_id`, `parent_span_id`, `message`, `metric_name`, `metric_value`, `attributes`, `created_at`
 
+However, the trace ingestion schema already accepted three fields that were **not** being persisted:
 
-✅ M6.2 is now functionally complete.
-9 passed in 0.36s
+- `operation_name`
+- `duration_ms`
+- `status`
 
-What those 9 tests confirmed
-- ✅ Valid NormalizedTelemetry objects are accepted
-- ✅ Invalid event_type is rejected
-- ✅ Negative duration_ms is rejected
-- ✅ Empty service_name is rejected
-- ✅ Invalid status is rejected
-- ✅ Empty message is rejected
-- ✅ Trace telemetry fits the common schema
-- ✅ Log telemetry fits the common schema
-- ✅ Metric telemetry fits the common schema
+These matter for the RCA pipeline because:
 
-Telemetry Normalization
-Total: 8 major steps
-Step	Work	Status
-M6.1	Inspect M5 output and freeze normalization contract	✅ Complete
-M6.2	Define normalized telemetry schema	✅ Complete
-M6.3	Implement trace normalization	⏳ Next
-M6.4	Implement log normalization	⏳
-M6.5	Implement metric normalization	⏳
-M6.6	Implement normalization service/pipeline	⏳
-M6.7	Add normalization tests	⏳
-M6.8	Final verification + README closeout	⏳
+| Field | Why it matters |
+|---|---|
+| `operation_name` | Identifies the failing or slow operation |
+| `duration_ms` | Enables latency and performance analysis |
+| `status` | Enables error/failure detection |
 
+### Schema Update
 
-What each remaining step means
-M6.3 — Trace Normalization
-Raw Trace
-   ↓
-TraceIngestRequest / DB event
-   ↓
-Trace Normalizer
-   ↓
-NormalizedTelemetry
+The `TelemetryEvent` SQLAlchemy model was updated with:
 
-We'll convert the raw trace fields into our common format.
-M6.4 — Log Normalization
-Raw Log
-   ↓
-Log Normalizer
-   ↓
-NormalizedTelemetry
+```text
+operation_name  VARCHAR(255)
+duration_ms     FLOAT
+status          VARCHAR(50)
+```
 
-M6.5 — Metric Normalization
-Raw Metric
-   ↓
-Metric Normalizer
-   ↓
-NormalizedTelemetry
+### Migration
 
-M6.6 — Normalization Service/Pipeline
-We'll create the central component that determines:
-event_type
-    ↓
-trace → trace normalizer
-log   → log normalizer
-metric → metric normalizer
-    ↓
-NormalizedTelemetry
+An Alembic migration was generated and applied:
 
-M6.7 — Normalization Tests
-We'll test the actual normalization process, not just the Pydantic schema.
-For example:
-Raw Trace
-   ↓
-normalize_trace()
-   ↓
-NormalizedTelemetry
-   ↓
-verify every field
+```text
+ce12331ef2cd → c0ebede2393f_add_trace_fields_to_telemetry_events.py
+```
 
-Same for logs and metrics.
-M6.8 — Final Verification + README
-We'll run the complete test suite, verify the normalization pipeline, update the README, and create the final M6 Git checkpoint.
-Overall M6 architecture
-                 M5 RAW TELEMETRY
-                       │
-          ┌────────────┼────────────┐
-          ↓            ↓            ↓
-        Trace         Log         Metric
-          │            │            │
-          ↓            ↓            ↓
-     M6.3           M6.4         M6.5
-     Normalize      Normalize    Normalize
-          │            │            │
-          └────────────┼────────────┘
-                       ↓
-              NormalizedTelemetry
-                       │
-                       ↓
-              M6.6 Normalization
-                  Service/Pipeline
-                       │
-                       ↓
-                  M6.7 Tests
-                       │
-                       ↓
-                  M6.8 Closeout
+PostgreSQL verification confirmed the three new columns are present on `telemetry_events`. Existing log and metric records correctly show the new fields as `None` for historical rows created before the schema update.
 
-So M6 has 8 major steps, and you've completed 2/8.
+### Trace Ingestion Update
 
-Implement Trace Normalization. 🚀
-M6.3 goal
-We currently have:
-Raw Trace
-   ↓
-TraceIngestRequest
-   ↓
-PostgreSQL TelemetryEvent
+The trace ingestion service was updated to persist `operation_name`, `duration_ms`, and `status` on new trace events.
 
-Now we need:
-TelemetryEvent
-      ↓
-Trace Normalizer
-      ↓
-NormalizedTelemetry
+```bash
+pytest -q tests/test_ingestion_service.py tests/test_telemetry_integration.py
+```
 
-The important point is that we are not changing the database again. We already have the fields we need from M6.1.
-M6.3 will have these small steps
-Step	Task
-M6.3.1	Design the trace normalization mapping
-M6.3.2	Implement normalize_trace()
-M6.3.3	Verify normalized trace output
-M6.3.4	Test edge cases
-M6.3.5	Complete M6.3 and checkpoint
+**7 tests passed** — the updated trace ingestion service correctly persists `operation_name`, `duration_ms`, and `status`; existing log and metric ingestion is unaffected; an OpenTelemetry trace flows end to end through the ingestion pipeline into PostgreSQL.
 
+---
 
-First: M6.3.1 — Trace mapping
-Our mapping will be:
-TelemetryEvent              NormalizedTelemetry
-────────────────────────────────────────────────
-id                    →     event_id
-event_type            →     event_type
-timestamp             →     timestamp
-service_name          →     service_name
-operation_name        →     operation_name
-trace_id              →     trace_id
-span_id               →     span_id
-parent_span_id        →     parent_span_id
-duration_ms           →     duration_ms
-status                →     status
-attributes             →     attributes
+## Telemetry Normalization
 
-Fields such as:
-message
-metric_name
-metric_value
+**Status:** 🔄 In progress
 
-will remain:
-None
+### Why Normalization Matters
 
+Telemetry arrives in three different shapes:
 
-because they aren't applicable to a trace.
-So a database record like:
-service_name  = payment-service
-operation     = process-payment
-duration      = 245.5
-status        = ERROR
-trace_id      = abc123
-span_id       = span456
+```text
+Trace:  service_name, operation_name, duration_ms, status, trace_id
+Log:    service_name, message, trace_id
+Metric: service_name, metric_name, metric_value
+```
 
-becomes:
+If these are sent directly to the RCA engine, it has to understand three different formats. Normalization converts all three into one common structure before anything downstream sees them:
+
+```mermaid
+flowchart TD
+    ING[Telemetry Ingestion] --> T[Trace]
+    ING --> L[Log]
+    ING --> M[Metric]
+    T --> N[Normalization]
+    L --> N
+    M --> N
+    N --> NT[NormalizedTelemetry]
+    NT --> RCA[Correlation / Causal Analysis / Root Cause]
+```
+
+This is what lets the RCA engine ask cross-signal questions such as *"did the CPU spike happen before the request became slow?"* or *"did the database error occur during the failed trace?"* — questions that require traces, logs, and metrics to already speak the same language.
+
+> **Normalization** = converting different telemetry formats into one common language so the rest of TraceRCA can analyze traces, logs, and metrics together.
+
+Raw ingestion schemas are not replaced — they are kept as the input boundary, and normalization sits as a layer after them:
+
+```mermaid
+flowchart TD
+    ING[Telemetry Ingestion] --> TS[Trace Schema]
+    ING --> LS[Log Schema]
+    ING --> MS[Metric Schema]
+    TS --> NORM[Normalization]
+    LS --> NORM
+    MS --> NORM
+    NORM --> NT[NormalizedTelemetry]
+    NT --> RCA[RCA / Correlation]
+```
+
+### Normalized Telemetry Schema
+
+Rather than three separate normalized schemas (one each for traces, logs, metrics), a single common schema was designed:
+
+```text
+                 NormalizedTelemetry
+                /         |          \
+            Trace        Log        Metric
+```
+
+| Field | Type | Required | Used by |
+|---|---|---|---|
+| `event_id` | UUID | ✅ | all |
+| `event_type` | `trace` / `log` / `metric` | ✅ | all |
+| `timestamp` | datetime | ✅ | all |
+| `service_name` | string | ✅ | all |
+| `operation_name` | string \| None | — | trace |
+| `trace_id` | string \| None | — | trace, log |
+| `span_id` | string \| None | — | trace, log |
+| `parent_span_id` | string \| None | — | trace |
+| `duration_ms` | float \| None | — | trace |
+| `status` | `UNSET`/`OK`/`ERROR` \| None | — | trace |
+| `message` | string \| None | — | log |
+| `metric_name` | string \| None | — | metric |
+| `metric_value` | float \| None | — | metric |
+| `attributes` | `dict[str, Any]` | ✅ | all |
+
+**Validation rules:**
+
+- `event_type` must be `trace`, `log`, or `metric`
+- `service_name` is required and cannot be empty or whitespace-only
+- `duration_ms` cannot be negative
+- `status` must be `UNSET`, `OK`, or `ERROR`
+- `message` cannot be empty if provided
+- `metric_name` has string length limits
+- Identifier fields are optional strings with length limits
+- `attributes` must be a dictionary
+
+```bash
+pytest -q
+```
+
+**9 tests passed**, confirming:
+
+- Valid `NormalizedTelemetry` objects are accepted
+- Invalid `event_type` is rejected
+- Negative `duration_ms` is rejected
+- Empty `service_name` is rejected
+- Invalid `status` is rejected
+- Empty `message` is rejected
+- Trace, log, and metric telemetry all fit the common schema
+
+### Trace Normalization
+
+**Status:** ✅ Complete
+
+| Source field (`TelemetryEvent`) | Normalized field |
+|---|---|
+| `id` | `event_id` |
+| `event_type` | `event_type` |
+| `timestamp` | `timestamp` |
+| `service_name` | `service_name` |
+| `operation_name` | `operation_name` |
+| `trace_id` | `trace_id` |
+| `span_id` | `span_id` |
+| `parent_span_id` | `parent_span_id` |
+| `duration_ms` | `duration_ms` |
+| `status` | `status` |
+| `attributes` | `attributes` |
+
+`message`, `metric_name`, and `metric_value` remain `None` for trace events.
+
+```python
 NormalizedTelemetry(
     event_type="trace",
     service_name="payment-service",
@@ -627,62 +477,191 @@ NormalizedTelemetry(
     trace_id="abc123",
     span_id="span456",
 )
+```
 
-What this function does
-It takes:
-TelemetryEvent
+A guard prevents other event types from reaching the trace normalizer:
 
-and produces:
-NormalizedTelemetry
-
-The transformation is essentially:
-Database Trace
-      │
-      │ normalize_trace()
-      ↓
-NormalizedTelemetry
-
-Why this check is important
-We added:
-if event.event_type != "trace":    raise ValueError("Expected a trace telemetry event")
-
-
-This prevents us from accidentally passing a log or metric into the trace normalizer.
-For example:
-Log event
-   ↓
-normalize_trace()
-   ↓
-❌ ValueError
-
-while:
-Trace event
-   ↓
-normalize_trace()
-   ↓
-✅ NormalizedTelemetry
-
-**#### Verification Result**
+```python
+if event.event_type != "trace":
+    raise ValueError("Expected a trace telemetry event")
+```
 
 ```bash
 pytest -q tests/test_trace_normalizer.py tests/test_normalized_telemetry.py
-
-**13 tests passed.** This confirmed that trace telemetry is correctly transformed from the persisted TelemetryEvent representation into the common NormalizedTelemetry structure; that all trace fields are preserved; that non-trace events are rejected by the trace normalizer; and that missing optional fields and attributes are handled safely.
----
-#### Verification Result
-
-```bash
-pytest -q tests/test_ingestion_service.py tests/test_telemetry_api.py
 ```
 
-**16 tests passed.** This confirmed that schema validation works for traces, logs, and metrics; that database errors are handled and rolled back at the service layer; that all endpoints return the same 500 response on persistence failure; and that existing ingestion functionality is unaffected.
+**13 tests passed** — trace telemetry is correctly transformed from the persisted `TelemetryEvent` into `NormalizedTelemetry`; all trace fields are preserved; non-trace events are rejected by the trace normalizer; missing optional fields and attributes are handled safely.
+
+### Log Normalization
+
+**Status:** ✅ Complete
+
+| Source field (`TelemetryEvent`) | Normalized field |
+|---|---|
+| `id` | `event_id` |
+| `event_type` | `event_type` |
+| `timestamp` | `timestamp` |
+| `service_name` | `service_name` |
+| `trace_id` | `trace_id` |
+| `span_id` | `span_id` |
+| `message` | `message` |
+| `attributes` | `attributes` |
+
+`operation_name`, `parent_span_id`, `duration_ms`, `status`, `metric_name`, and `metric_value` remain `None` for log events.
+
+```python
+NormalizedTelemetry(
+    event_type="log",
+    service_name="payment-service",
+    message="Database connection failed",
+    trace_id="abc123",
+    span_id="span456",
+    attributes={"level": "ERROR"},
+)
+```
+
+Edge cases tested: a log without `trace_id`, a log without `span_id`, and a log with `attributes=None` (which normalizes to `{}`).
+
+```bash
+pytest -q tests/test_log_normalizer.py
+```
+
+**2 tests passed** — log telemetry normalizes correctly, with optional fields and missing attributes handled safely.
+
+### Metric Normalization
+
+**Status:** ✅ Complete
+
+Converts persisted `TelemetryEvent` metric records into the common `NormalizedTelemetry` representation.
+
+| Source field (`TelemetryEvent`) | Normalized field |
+|---|---|
+| `id` | `event_id` |
+| `event_type` | `event_type` |
+| `timestamp` | `timestamp` |
+| `service_name` | `service_name` |
+| `metric_name` | `metric_name` |
+| `metric_value` | `metric_value` |
+| `attributes` | `attributes` |
+
+`operation_name`, `trace_id`, `span_id`, `parent_span_id`, `duration_ms`, `status`, and `message` remain `None` for metric events.
+
+```python
+NormalizedTelemetry(
+    event_type="metric",
+    service_name="payment-service",
+    metric_name="cpu_usage",
+    metric_value=95.4,
+    attributes={...},
+)
+```
+
+A guard prevents other event types from reaching the metric normalizer, and attributes are handled safely when missing:
+
+```python
+if event.event_type != "metric":
+    raise ValueError("Expected a metric telemetry event")
+```
+
+Zero and negative metric values are preserved correctly rather than being treated as missing data.
+
+```bash
+pytest -q tests/test_metric_normalizer.py
+```
+
+**5 tests passed.**
+
+Combined verification across all three normalizers:
+
+```bash
+pytest -q tests/test_trace_normalizer.py tests/test_log_normalizer.py tests/test_metric_normalizer.py
+```
+
+**14 tests passed** — trace, log, and metric telemetry can all be transformed correctly into the common `NormalizedTelemetry` structure, and the metric normalizer handles optional attributes and valid metric values safely.
+
+### Normalization Service / Pipeline
+
+**Status:** ✅ Complete
+
+With all three event-specific normalizers in place, a single routing layer was added so the rest of the system doesn't need to know which normalizer to call for a given event:
+
+```mermaid
+flowchart TD
+    E[TelemetryEvent] --> R{event_type?}
+    R -- trace --> NT1[normalize_trace]
+    R -- log --> NT2[normalize_log]
+    R -- metric --> NT3[normalize_metric]
+    NT1 --> OUT[NormalizedTelemetry]
+    NT2 --> OUT
+    NT3 --> OUT
+```
+
+The service is intentionally a thin router — it contains no normalization logic of its own, only the decision of which normalizer to call — which keeps the architecture modular and makes it straightforward to add another telemetry type later.
+
+```python
+def normalize_event(event: TelemetryEvent) -> NormalizedTelemetry:
+    """
+    Normalize a telemetry event using the appropriate
+    event-specific normalizer.
+    """
+    if event.event_type == "trace":
+        return normalize_trace(event)
+    if event.event_type == "log":
+        return normalize_log(event)
+    if event.event_type == "metric":
+        return normalize_metric(event)
+    raise ValueError(
+        f"Unsupported telemetry event type: {event.event_type}"
+    )
+```
+
+Callers now go through a single entry point, `normalize_event(event)`, rather than knowing about `normalize_trace`, `normalize_log`, and `normalize_metric` individually. Unsupported event types raise a clear error rather than failing silently.
+
+```bash
+pytest -q tests/test_trace_normalizer.py tests/test_log_normalizer.py tests/test_metric_normalizer.py tests/test_normalization_service.py tests/test_normalized_telemetry.py
+```
+
+**27 tests passed** — this confirmed that the normalized telemetry schema, trace normalization, log normalization, metric normalization, and the unified normalization service all work correctly together. This is the full normalization foundation, verified end to end:
+
+```mermaid
+flowchart TD
+    E[TelemetryEvent] --> NE[normalize_event]
+    NE --> T[normalize_trace]
+    NE --> L[normalize_log]
+    NE --> M[normalize_metric]
+    T --> NT[NormalizedTelemetry]
+    L --> NT
+    M --> NT
+    NT --> RCA[Future RCA Engine]
+```
+
+### Normalization Roadmap
+
+```mermaid
+flowchart TD
+    RAW[Raw Telemetry] --> T[Trace Normalizer]
+    RAW --> L[Log Normalizer]
+    RAW --> M[Metric Normalizer]
+    T --> NT[NormalizedTelemetry]
+    L --> NT
+    M --> NT
+    NT --> SVC[Normalization Service / Pipeline]
+    SVC --> TEST[Pipeline-Level Tests]
+    TEST --> DONE[Final Verification & Documentation]
+```
+
+| Task | Status |
+|---|---|
+| Freeze normalization contract | ✅ Complete |
+| Define normalized telemetry schema | ✅ Complete |
+| Trace normalization | ✅ Complete |
+| Log normalization | ✅ Complete |
+| Metric normalization | ✅ Complete |
+| Normalization service / pipeline | ✅ Complete |
+| Pipeline-level normalization tests | ⏳ Planned |
+| Final verification & documentation closeout | ⏳ Planned |
 
 ---
-
-
-pytest -q tests/test_ingestion_service.py tests/test_telemetry_integration.py
-
-**7 tests passed.** This confirmed that the updated trace ingestion service correctly persists operation_name, duration_ms, and status; that existing log and metric ingestion functionality remains unaffected; and that the OpenTelemetry trace successfully flows through the ingestion pipeline and is persisted to PostgreSQL.
 
 ## Project Structure
 
@@ -718,7 +697,11 @@ TraceRCA-AI/
 │   ├── test_tracing.py
 │   ├── test_telemetry_models.py
 │   ├── test_ingestion_service.py
-│   └── test_telemetry_api.py
+│   ├── test_telemetry_api.py
+│   ├── test_telemetry_integration.py
+│   ├── test_normalized_telemetry.py
+│   ├── test_trace_normalizer.py
+│   └── test_log_normalizer.py
 ├── docs/
 ├── scripts/
 ├── .env.example
@@ -757,4 +740,10 @@ pytest -q
 
 # Run the telemetry ingestion tests
 pytest -q tests/test_ingestion_service.py tests/test_telemetry_api.py
+
+# Run the OpenTelemetry integration test
+pytest -q tests/test_ingestion_service.py tests/test_telemetry_integration.py
+
+# Run the normalization tests
+pytest -q tests/test_normalized_telemetry.py tests/test_trace_normalizer.py tests/test_log_normalizer.py
 ```
