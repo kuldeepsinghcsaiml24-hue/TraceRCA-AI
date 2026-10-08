@@ -33,6 +33,21 @@ TraceRCA AI is an observability and root-cause-analysis (RCA) platform for distr
   - [Time / Service-Based Correlation](#time--service-based-correlation)
   - [Unified Correlation Service / Pipeline](#unified-correlation-service--pipeline)
   - [Correlation Roadmap](#correlation-roadmap)
+- [Service Topology + Neo4j](#service-topology--neo4j)
+  - [Why Service Topology Matters](#why-service-topology-matters)
+  - [Topology Architecture](#topology-architecture)
+  - [Topology Contract](#topology-contract)
+  - [Topology Construction Rules](#topology-construction-rules)
+  - [Topology Schemas](#topology-schemas)
+  - [Neo4j Infrastructure](#neo4j-infrastructure)
+  - [Neo4j Connection Layer](#neo4j-connection-layer)
+  - [Service-Node Creation / Upsert](#service-node-creation--upsert)
+  - [Dependency-Edge Creation / Upsert](#dependency-edge-creation--upsert)
+  - [Topology Construction Pipeline](#topology-construction-pipeline)
+  - [Topology Query / Retrieval](#topology-query--retrieval)
+  - [Dashboard Integration Direction](#dashboard-integration-direction)
+  - [Topology Testing & Verification](#topology-testing--verification)
+  - [Topology Roadmap](#topology-roadmap)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
 - [Testing](#testing)
@@ -147,7 +162,7 @@ flowchart TD
 
 | Part | Status |
 |---|---|
-| Part 1 — Observability Foundation | 🔄 In progress — ingestion, normalization, and correlation complete |
+| Part 1 — Observability Foundation | 🔄 In progress — ingestion, normalization, correlation, and service topology complete |
 | Part 2 — AI Root Cause Intelligence | ⏳ Planned |
 | Part 3 — Auto-Healing & Production | ⏳ Planned |
 
@@ -160,6 +175,7 @@ flowchart TD
 | Database Schema Evolution (trace fields) | ✅ Complete |
 | Telemetry Normalization | ✅ Complete |
 | Telemetry Correlation | ✅ Complete |
+| Service Topology + Neo4j | ✅ Complete |
 
 ---
 
@@ -853,6 +869,343 @@ This confirmed trace–log correlation via `trace_id` (and the stronger `trace_i
 
 ---
 
+## Service Topology + Neo4j
+
+**Status:** ✅ Complete
+
+Transforms relationships observed in normalized telemetry into a persistent service dependency graph in Neo4j. The topology layer provides the structural context required by later RCA, Graph RAG, blast-radius analysis, and dashboard visualization.
+
+### Why Service Topology Matters
+
+Distributed systems contain multiple services that communicate with each other:
+
+```mermaid
+flowchart TD
+    U[User] --> G[API Gateway]
+    G --> O[Order Service]
+    O --> P[Payment Service]
+    P --> D[(Database)]
+```
+
+When an incident occurs, knowing that a service is failing is not enough. TraceRCA must also understand which services depend on it, which services it depends on, how failures can propagate, and which services may be affected by an incident. The service topology provides this structural context.
+
+### Topology Architecture
+
+```mermaid
+flowchart TD
+    NT[Normalized Telemetry] --> TB[Topology Builder]
+    TB --> SN[Service Nodes]
+    TB --> DE[Dependency Edges]
+    SN --> N4J[(Neo4j)]
+    DE --> N4J
+    N4J --> TQ[Topology Query]
+    TQ --> TR[TopologyResponse]
+    TR --> API[Future FastAPI Endpoint]
+    API --> DASH[Future Next.js Dashboard]
+```
+
+The topology layer sits between normalized telemetry and the future RCA / dashboard layers.
+
+### Topology Contract
+
+Two primary graph entities were defined.
+
+**Service Node** — every unique service becomes a node:
+
+```text
+Service
+├── service_name
+├── first_seen
+├── last_seen
+└── attributes
+```
+
+**Dependency Edge** — a relationship between two services:
+
+```text
+Source Service
+      │
+      │ DEPENDS_ON
+      ▼
+Target Service
+```
+
+Dependencies are derived from parent/child service relationships observed within a trace, not from events simply occurring near each other in time:
+
+```text
+Trace
+│
+├── api-gateway   (parent span)
+│
+└── payment-service (child span)
+```
+
+becomes:
+
+```text
+api-gateway
+      │
+      ▼
+payment-service
+```
+
+This is represented in Neo4j as:
+
+```text
+(:Service)-[:DEPENDS_ON]->(:Service)
+```
+
+### Topology Construction Rules
+
+| Situation | Result |
+|---|---|
+| Same service observed repeatedly | Reuse the same `Service` node |
+| Different services connected through a valid trace/span relationship | Create a dependency edge |
+| Same dependency observed repeatedly | Reuse/update the existing edge |
+| Same service as source and target | Reject self-dependency |
+| Services only close in time | Do not create a dependency |
+| Insufficient relationship information | Do not invent a dependency |
+
+A particularly important design rule: **TraceRCA must not infer a service dependency merely because two services generated telemetry near each other in time.** Topology dependencies require structural evidence from the trace/span relationship.
+
+### Topology Schemas
+
+Two Pydantic models represent the topology.
+
+**`ServiceNode`**
+
+```python
+ServiceNode(
+    service_name="payment-service",
+    first_seen=...,
+    last_seen=...,
+)
+```
+
+Validation ensures `service_name` is not empty, whitespace-only names are rejected, and service names have a maximum length of 255 characters.
+
+**`DependencyEdge`**
+
+```python
+DependencyEdge(
+    source_service="api-gateway",
+    target_service="payment-service",
+    first_seen=...,
+    last_seen=...,
+)
+```
+
+Validation ensures the source and target services are each valid, and that source and target cannot be the same service (no `payment-service → payment-service` self-dependency).
+
+**`TopologyResponse`**
+
+```python
+TopologyResponse(
+    services=[...],
+    dependencies=[...],
+)
+```
+
+`ServiceNode` maps onto a Neo4j node and `DependencyEdge` onto a Neo4j relationship, which is why they are kept as separate models. `TopologyResponse` gives downstream consumers a single representation of the complete service graph.
+
+### Neo4j Infrastructure
+
+Neo4j was added as the graph database for the service topology, running in a Docker container named `tracerca-neo4j`:
+
+| Interface | Address |
+|---|---|
+| Browser | `localhost:7474` |
+| Bolt | `localhost:7687` |
+
+The Neo4j data directory uses a persistent Docker volume, so stopping the container does not remove the stored graph data. Connectivity was verified using the Neo4j Browser and a Bolt connection.
+
+### Neo4j Connection Layer
+
+A dedicated asynchronous Neo4j connection layer was implemented at `backend/app/db/neo4j.py`, using the official Neo4j Python driver to provide asynchronous driver creation, connectivity verification, and connection cleanup.
+
+Configuration lives in `backend/app/core/config.py` and is supplied through environment variables rather than hard-coded credentials. The local `.env` file stays ignored by Git so credentials are never committed to the repository.
+
+### Service-Node Creation / Upsert
+
+Implemented in `backend/app/telemetry/topology_service.py` using Neo4j `MERGE` for idempotent service creation:
+
+```cypher
+MERGE (s:Service {
+    service_name: $service_name
+})
+```
+
+If a service doesn't exist, a new node is created:
+
+```text
+(:Service {
+    service_name: "payment-service",
+    first_seen: ...,
+    last_seen: ...
+})
+```
+
+If it already exists, the existing node is reused: `first_seen` is preserved as the earliest observation and `last_seen` is updated to the latest one — so repeated observations never create duplicate service nodes.
+
+### Dependency-Edge Creation / Upsert
+
+Dependency relationships are represented as `(:Service)-[:DEPENDS_ON]->(:Service)` and also use Neo4j `MERGE`:
+
+```text
+api-gateway
+     │
+     │ DEPENDS_ON
+     ▼
+payment-service
+```
+
+The relationship stores `first_seen` and `last_seen`. Repeated observations of the same source and target update the existing relationship rather than creating duplicate edges, and both service nodes must already exist before a dependency relationship is created between them.
+
+```bash
+pytest -q tests/test_topology_service.py
+```
+
+**1 passed** — confirms Neo4j actually creates a `test-api-service → DEPENDS_ON → test-database-service` relationship, i.e. TraceRCA can create two `Service` nodes, create a `DEPENDS_ON` relationship between them, store `first_seen`/`last_seen`, and use `MERGE` to prevent duplicate dependency edges against a real Neo4j database.
+
+### Topology Construction Pipeline
+
+Implemented in `backend/app/telemetry/topology_builder.py`, which accepts `NormalizedTelemetry` and builds the graph from it:
+
+```mermaid
+flowchart TD
+    NT[NormalizedTelemetry] --> SN[service_name]
+    SN --> N[ServiceNode]
+    N --> N4[Neo4j Service]
+```
+
+Trace parent/child relationships are also converted into service dependencies:
+
+```text
+Parent Span
+api-gateway
+     ↓
+Child Span
+payment-service
+```
+
+becomes:
+
+```text
+api-gateway
+     │
+     │ DEPENDS_ON
+     ▼
+payment-service
+```
+
+The builder does **not** create a dependency when either service name is missing, the events are not trace events, or both spans belong to the same service — ensuring topology relationships are based on meaningful trace structure rather than simple temporal proximity.
+
+### Topology Query / Retrieval
+
+`get_topology()` retrieves two categories of information from Neo4j:
+
+| Category | Fields |
+|---|---|
+| Services | `service_name`, `first_seen`, `last_seen` |
+| Dependencies | `source_service`, `target_service`, `first_seen`, `last_seen` |
+
+```cypher
+MATCH (s:Service)
+RETURN s.service_name, s.first_seen, s.last_seen
+```
+
+```cypher
+MATCH (source:Service)-[d:DEPENDS_ON]->(target:Service)
+RETURN source.service_name, target.service_name, d.first_seen, d.last_seen
+```
+
+The result is returned as a `TopologyResponse`:
+
+```json
+{
+  "services": [
+    { "service_name": "payment-service", "first_seen": "...", "last_seen": "..." }
+  ],
+  "dependencies": [
+    { "source_service": "payment-service", "target_service": "order-service", "first_seen": "...", "last_seen": "..." }
+  ]
+}
+```
+
+This creates a clean boundary between the Neo4j graph representation and future API/dashboard consumers.
+
+### Dashboard Integration Direction
+
+The topology retrieval structure was intentionally designed for the future TraceRCA dashboard:
+
+```mermaid
+flowchart LR
+    N4J[(Neo4j)] --> GT[get_topology]
+    GT --> TR[TopologyResponse]
+    TR --> API[FastAPI]
+    API --> DASH[Next.js Dashboard]
+    DASH --> VIZ[Graph Visualization]
+```
+
+The dashboard will eventually visualize chains such as `Frontend → API → Order Service → Payment Service → Database` without the frontend needing to understand Neo4j or Cypher.
+
+### Topology Testing & Verification
+
+Dedicated topology tests were added:
+
+- `tests/test_topology.py`
+- `tests/test_topology_service.py`
+
+Coverage includes: `ServiceNode` creation and validation, `DependencyEdge` creation and self-dependency validation, Neo4j service-node upsert, Neo4j dependency-edge upsert, topology construction, topology retrieval, and complete topology integration.
+
+```bash
+pytest -q tests/test_topology.py tests/test_topology_service.py
+```
+
+**11 tests passed.**
+
+A full regression run was then executed across the entire project:
+
+```bash
+pytest -q
+```
+
+**92 passed, 6 warnings** — confirming the new Neo4j/topology functionality did not break existing telemetry ingestion, normalization, correlation, or other project functionality. The warnings were dependency deprecation warnings, not test failures.
+
+```mermaid
+flowchart TD
+    OT[OpenTelemetry] --> ING[Telemetry Ingestion]
+    ING --> NORM[Normalization]
+    NORM --> CORR[Correlation]
+    CORR --> TB[Topology Builder]
+    TB --> SN[Service Nodes]
+    TB --> DE[Dependency Edges]
+    SN --> N4J[(Neo4j)]
+    DE --> N4J
+    N4J --> TR[TopologyResponse]
+    TR --> RCA[Future RCA Engine]
+    TR --> DASH[Future Dashboard]
+```
+
+Service topology completes the structural foundation required by the later RCA and Graph RAG layers.
+
+### Topology Roadmap
+
+| Task | Status |
+|---|---|
+| Inspect correlation output and define topology contract | ✅ Complete |
+| Define service-node and dependency-edge schemas | ✅ Complete |
+| Set up Neo4j infrastructure | ✅ Complete |
+| Configure Neo4j connection layer | ✅ Complete |
+| Implement service-node creation/upsert | ✅ Complete |
+| Implement dependency-edge creation/upsert | ✅ Complete |
+| Build topology construction service/pipeline | ✅ Complete |
+| Add topology query/retrieval | ✅ Complete |
+| Add topology tests + integration verification | ✅ Complete |
+| Final verification + documentation closeout | ✅ Complete |
+
+---
+
 ## Project Structure
 
 ```text
@@ -873,10 +1226,14 @@ TraceRCA-AI/
 │   │   ├── db/
 │   │   │   ├── base.py
 │   │   │   ├── database.py
-│   │   │   └── models.py
+│   │   │   ├── models.py
+│   │   │   └── neo4j.py
 │   │   └── telemetry/
 │   │       ├── models.py
-│   │       └── tracing.py
+│   │       ├── tracing.py
+│   │       ├── normalizers.py
+│   │       ├── topology_service.py
+│   │       └── topology_builder.py
 │   └── alembic/
 │       ├── env.py
 │       └── versions/
@@ -894,7 +1251,9 @@ TraceRCA-AI/
 │   ├── test_log_normalizer.py
 │   ├── test_metric_normalizer.py
 │   ├── test_normalization_service.py
-│   └── test_correlation.py
+│   ├── test_correlation.py
+│   ├── test_topology.py
+│   └── test_topology_service.py
 ├── docs/
 ├── scripts/
 ├── .env.example
@@ -909,7 +1268,7 @@ TraceRCA-AI/
 
 ## Getting Started
 
-> **Prerequisites:** Python, PostgreSQL, and Redis.
+> **Prerequisites:** Python, PostgreSQL, Redis, Docker (for Neo4j).
 
 ```bash
 # 1. Install dependencies
@@ -921,8 +1280,20 @@ cp .env.example .env
 # 3. Apply database migrations
 alembic upgrade head
 
-# 4. Run the API
+# 4. Start Neo4j (service topology)
+docker start tracerca-neo4j
+# Browser: http://localhost:7474   Bolt: localhost:7687
+
+# 5. Run the API
 uvicorn backend.app.main:app --reload
+```
+
+### Troubleshooting (Windows)
+
+If `docker` commands aren't recognized in PowerShell, add Docker to the `PATH` for the current session:
+
+```powershell
+$env:Path += ";C:\Program Files\Docker\Docker\resources\bin"
 ```
 
 ## Testing
@@ -938,5 +1309,11 @@ pytest -q tests/test_ingestion_service.py tests/test_telemetry_api.py
 pytest -q tests/test_ingestion_service.py tests/test_telemetry_integration.py
 
 # Run the normalization tests
-pytest -q tests/test_normalized_telemetry.py tests/test_trace_normalizer.py tests/test_log_normalizer.py
+pytest -q tests/test_normalized_telemetry.py tests/test_trace_normalizer.py tests/test_log_normalizer.py tests/test_metric_normalizer.py tests/test_normalization_service.py
+
+# Run the correlation tests
+pytest -q tests/test_correlation.py
+
+# Run the topology tests
+pytest -q tests/test_topology.py tests/test_topology_service.py
 ```
