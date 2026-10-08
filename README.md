@@ -1206,6 +1206,312 @@ Service topology completes the structural foundation required by the later RCA a
 
 ---
 
+Inspect M8 Output & Freeze Anomaly Contract
+Do not write code yet. First, we define exactly what TraceRCA considers an anomaly.
+1. What M8 currently gives us
+Our pipeline now has:
+OpenTelemetry
+      ↓
+Telemetry Ingestion
+      ↓
+Normalization (M6)
+      ↓
+Correlation (M7)
+      ↓
+Service Topology (M8)
+      ↓
+Neo4j
+
+M8 gives us information such as:
+- Services
+- Service timestamps
+- Service dependencies
+- Trace relationships
+- Dependency graph
+For M9, we use this foundation to detect abnormal behavior.
+2. What is an anomaly in TraceRCA?
+For Part 1, we'll define an anomaly as:
+A telemetry observation whose behavior significantly deviates from the expected behavior of a service.
+
+We'll initially detect three important types:
+Anomaly	Example
+Latency anomaly	A service normally responds in 100 ms but suddenly takes 900 ms
+Error-rate anomaly	A service normally has 1% errors but suddenly reaches 30%
+Metric anomaly	CPU normally stays around 40% but suddenly reaches 95%
+
+
+This is deliberately basic anomaly detection for Part 1.
+We are not yet doing sophisticated ML-based anomaly detection.
+3. M9 anomaly contract
+Every detected anomaly should contain at least:
+Anomaly
+│
+├── anomaly_id
+├── service_name
+├── anomaly_type
+├── timestamp
+├── observed_value
+├── expected_value
+├── severity
+└── description
+
+We'll use three anomaly types:
+LATENCY
+ERROR_RATE
+METRIC
+
+And three severity levels:
+LOW
+MEDIUM
+HIGH
+
+4. Detection rules
+We'll start with simple, explainable rules.
+Latency
+Compare the current latency against a baseline.
+Example:
+Expected latency = 100 ms
+Observed latency = 500 ms
+
+The detector determines whether the deviation is large enough to classify it as an anomaly.
+Error rate
+Calculate:
+error_rate =
+number of failed requests
+-------------------------
+total requests
+
+Example:
+100 requests
+30 errors
+
+error rate = 30%
+
+If this is significantly higher than the baseline, we generate an anomaly.
+Metrics
+For metrics such as CPU utilization:
+Expected CPU = 40%
+Observed CPU = 95%
+
+The deviation can trigger a metric anomaly.
+5. Important design decision
+We should not say:
+"Any high value is an anomaly."
+
+Instead:
+Observed behavior
+       ↓
+Compare with baseline
+       ↓
+Calculate deviation
+       ↓
+Apply threshold
+       ↓
+Anomaly?
+   ↙       ↘
+ YES       NO
+
+This will make the system explainable, which is important later when we connect anomaly detection to RCA.
+M9.1 status
+So our first step is now conceptually frozen:
+TraceRCA detects latency, error-rate, and metric anomalies by comparing observed telemetry behavior against an expected baseline and assigning a severity based on the deviation.
+
+
+Latency Anomaly Detection
+Now we'll implement the first actual detector.
+The idea will be:
+Trace events
+    ↓
+Get duration
+    ↓
+Compare with baseline
+    ↓
+Calculate deviation
+    ↓
+Check threshold
+    ↓
+Anomaly / Normal
+
+Latency Anomaly Detection.
+We will keep this step simple and explainable.
+1. What are we detecting?
+Our normalized trace telemetry already contains:
+duration_ms
+service_name
+timestamp
+
+So for each service, we can compare an observed trace duration with an expected latency baseline.
+For example:
+Expected latency = 100 ms
+Observed latency = 250 ms
+
+The deviation is:
+(250 - 100) / 100 × 100 = 150%
+
+That is a significant increase.
+2. Rule for M9.3
+For our basic detector, let's use a percentage-based threshold:
+deviation = |observed - expected| / expected
+
+We'll classify:
+Deviation	Severity
+< 50%	Normal
+50% – <100%	LOW
+100% – <200%	MEDIUM
+≥ 200%	HIGH
+
+
+So:
+Expected = 100 ms
+Observed = 180 ms
+Deviation = 80%
+→ LOW
+
+Expected = 100 ms
+Observed = 250 ms
+Deviation = 150%
+→ MEDIUM
+
+Expected = 100 ms
+Observed = 350 ms
+Deviation = 250%
+→ HIGH
+
+3. One important edge case
+If:
+expected_value = 0
+
+we cannot calculate the percentage deviation because that would require division by zero.
+
+
+Error-Rate Anomaly Detection.
+We'll follow the same principle as latency: simple, explainable, threshold-based detection.
+1. What are we detecting?
+For a service:
+total requests = 100
+failed requests = 25
+
+The error rate is:
+25 / 100 × 100 = 25%
+
+We'll compare the observed error rate with the expected baseline.
+2. M9.4 rules
+We'll use percentage-point deviation from the expected error rate:
+Deviation from baseline	Severity
+< 5 percentage points	Normal
+5 – <10	LOW
+10 – <20	MEDIUM
+≥20	HIGH
+
+
+Example:
+Expected error rate = 2%
+Observed error rate = 15%
+
+Deviation = 13 percentage points
+→ MEDIUM
+
+rror-Rate Anomaly Detection is working correctly.
+Your results match the contract:
+Test 1 — Error-rate anomaly
+Expected = 2%
+Observed = 15%
+
+Deviation = 13 percentage points
+Severity = MEDIUM
+
+The detector correctly generated an ERROR_RATE anomaly.
+Test 2 — Normal
+Expected = 2%
+Observed = 4%
+
+Deviation = 2 percentage points
+
+Below our 5-point threshold, so:
+None
+
+Correct. ✅
+
+Metric Anomaly Detection.
+This will handle metrics such as:
+- CPU utilization
+- Memory utilization
+- Request count
+- Queue size
+- Any other numeric metric from OpenTelemetry
+1. Detection rule
+Unlike error rate, metrics can have different units, so we'll use relative percentage deviation, just like latency.
+deviation = |observed - expected| / expected
+
+We'll use:
+Deviation	Result
+< 50%	Normal
+50% – <100%	LOW
+100% – <200%	MEDIUM
+≥ 200%	HIGH
+
+
+For example:
+Expected CPU = 40
+Observed CPU = 100
+
+Deviation = 150%
+→ MEDIUM
+
+
+Unified Anomaly Detection Service
+This is where we'll bring the three detectors together:
+Unified Anomaly Detection Service.
+The goal is to have one entry point that chooses the correct detector based on the telemetry type.
+
+                 Normalized Telemetry
+                         ↓
+              Anomaly Detection Service
+                  ↙       ↓       ↘
+             Latency   Error Rate   Metric
+                ↓         ↓          ↓
+                    Anomaly
+
+
+Normalized Telemetry
+        │
+        ▼
+AnomalyDetectionService
+        │
+        ├── Latency ──────► Latency Detector
+        │
+        ├── Error Rate ───► Error Detector
+        │
+        └── Metric ───────► Metric Detector
+                              │
+                              ▼
+                           Anomaly
+
+Automated Tests
+Now we'll convert the manual checks we've been doing into proper pytest tests.
+We'll test:
+- Normal latency
+- Low/medium/high latency anomalies
+- Invalid latency input
+- Normal error rate
+- Low/medium/high error-rate anomalies
+- Invalid error-rate input
+- Normal metrics
+- Low/medium/high metric anomalies
+- Invalid metric input
+- Unified service behavior
+
+### Anomaly Detection and services Roadmap
+Step	Status
+M9.1 — Inspect M8 output & freeze anomaly contract	✅ DONE
+M9.2 — Define anomaly schema	✅ DONE
+M9.3 — Latency anomaly detection	✅ DONE
+M9.4 — Error-rate anomaly detection	✅ DONE
+M9.5 — Metric anomaly detection	✅ DONE
+M9.6 — Unified anomaly detection service	✅ DONE
+M9.7 — Tests	✅ DONE
+M9.8 — Final verification + README	✅ DONE
+
 ## Project Structure
 
 ```text
@@ -1317,3 +1623,8 @@ pytest -q tests/test_correlation.py
 # Run the topology tests
 pytest -q tests/test_topology.py tests/test_topology_service.py
 ```
+
+
+#docker issue command
+
+(.venv) PS C:\Users\Kuldeeep Singh\TraceRCA-AI> $env:Path += ";C:\Program Files\Docker\Docker\resources\bin"
