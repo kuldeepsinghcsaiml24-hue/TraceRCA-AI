@@ -1,0 +1,458 @@
+{
+    "openapi":  "3.1.0",
+    "info":  {
+                 "title":  "TraceRCA AI",
+                 "description":  "Distributed OpenTelemetry Multi-Layer Causal Inference \u0026 Auto-Healing Engine",
+                 "version":  "0.1.0"
+             },
+    "paths":  {
+                  "/health":  {
+                                  "get":  {
+                                              "tags":  [
+                                                           "Health"
+                                                       ],
+                                              "summary":  "Health Check",
+                                              "description":  "Return the health status of the TraceRCA AI backend.",
+                                              "operationId":  "health_check_health_get",
+                                              "responses":  {
+                                                                "200":  {
+                                                                            "description":  "Successful Response",
+                                                                            "content":  {
+                                                                                            "application/json":  {
+                                                                                                                     "schema":  {
+                                                                                                                                    "additionalProperties":  {
+                                                                                                                                                                 "type":  "string"
+                                                                                                                                                             },
+                                                                                                                                    "type":  "object",
+                                                                                                                                    "title":  "Response Health Check Health Get"
+                                                                                                                                }
+                                                                                                                 }
+                                                                                        }
+                                                                        }
+                                                            }
+                                          }
+                              },
+                  "/telemetry/traces":  {
+                                            "post":  {
+                                                         "tags":  [
+                                                                      "Telemetry"
+                                                                  ],
+                                                         "summary":  "Create Trace",
+                                                         "description":  "Ingest and persist a distributed trace span.",
+                                                         "operationId":  "create_trace_telemetry_traces_post",
+                                                         "requestBody":  {
+                                                                             "content":  {
+                                                                                             "application/json":  {
+                                                                                                                      "schema":  {
+                                                                                                                                     "$ref":  "#/components/schemas/TraceIngestRequest"
+                                                                                                                                 }
+                                                                                                                  }
+                                                                                         },
+                                                                             "required":  true
+                                                                         },
+                                                         "responses":  {
+                                                                           "201":  {
+                                                                                       "description":  "Successful Response",
+                                                                                       "content":  {
+                                                                                                       "application/json":  {
+                                                                                                                                "schema":  {
+
+                                                                                                                                           }
+                                                                                                                            }
+                                                                                                   }
+                                                                                   },
+                                                                           "422":  {
+                                                                                       "description":  "Validation Error",
+                                                                                       "content":  {
+                                                                                                       "application/json":  {
+                                                                                                                                "schema":  {
+                                                                                                                                               "$ref":  "#/components/schemas/HTTPValidationError"
+                                                                                                                                           }
+                                                                                                                            }
+                                                                                                   }
+                                                                                   }
+                                                                       }
+                                                     }
+                                        },
+                  "/telemetry/logs":  {
+                                          "post":  {
+                                                       "tags":  [
+                                                                    "Telemetry"
+                                                                ],
+                                                       "summary":  "Create Log",
+                                                       "description":  "Ingest and persist a log event.",
+                                                       "operationId":  "create_log_telemetry_logs_post",
+                                                       "requestBody":  {
+                                                                           "content":  {
+                                                                                           "application/json":  {
+                                                                                                                    "schema":  {
+                                                                                                                                   "$ref":  "#/components/schemas/LogIngestRequest"
+                                                                                                                               }
+                                                                                                                }
+                                                                                       },
+                                                                           "required":  true
+                                                                       },
+                                                       "responses":  {
+                                                                         "201":  {
+                                                                                     "description":  "Successful Response",
+                                                                                     "content":  {
+                                                                                                     "application/json":  {
+                                                                                                                              "schema":  {
+
+                                                                                                                                         }
+                                                                                                                          }
+                                                                                                 }
+                                                                                 },
+                                                                         "422":  {
+                                                                                     "description":  "Validation Error",
+                                                                                     "content":  {
+                                                                                                     "application/json":  {
+                                                                                                                              "schema":  {
+                                                                                                                                             "$ref":  "#/components/schemas/HTTPValidationError"
+                                                                                                                                         }
+                                                                                                                          }
+                                                                                                 }
+                                                                                 }
+                                                                     }
+                                                   }
+                                      },
+                  "/telemetry/metrics":  {
+                                             "post":  {
+                                                          "tags":  [
+                                                                       "Telemetry"
+                                                                   ],
+                                                          "summary":  "Create Metric",
+                                                          "description":  "Ingest and persist a metric event.",
+                                                          "operationId":  "create_metric_telemetry_metrics_post",
+                                                          "requestBody":  {
+                                                                              "content":  {
+                                                                                              "application/json":  {
+                                                                                                                       "schema":  {
+                                                                                                                                      "$ref":  "#/components/schemas/MetricIngestRequest"
+                                                                                                                                  }
+                                                                                                                   }
+                                                                                          },
+                                                                              "required":  true
+                                                                          },
+                                                          "responses":  {
+                                                                            "201":  {
+                                                                                        "description":  "Successful Response",
+                                                                                        "content":  {
+                                                                                                        "application/json":  {
+                                                                                                                                 "schema":  {
+
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                    }
+                                                                                    },
+                                                                            "422":  {
+                                                                                        "description":  "Validation Error",
+                                                                                        "content":  {
+                                                                                                        "application/json":  {
+                                                                                                                                 "schema":  {
+                                                                                                                                                "$ref":  "#/components/schemas/HTTPValidationError"
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                    }
+                                                                                    }
+                                                                        }
+                                                      }
+                                         },
+                  "/dashboard/overview":  {
+                                              "get":  {
+                                                          "tags":  [
+                                                                       "Dashboard"
+                                                                   ],
+                                                          "summary":  "Get Dashboard Overview",
+                                                          "description":  "Return dashboard overview from persisted telemetry.",
+                                                          "operationId":  "get_dashboard_overview_dashboard_overview_get",
+                                                          "responses":  {
+                                                                            "200":  {
+                                                                                        "description":  "Successful Response",
+                                                                                        "content":  {
+                                                                                                        "application/json":  {
+                                                                                                                                 "schema":  {
+
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                    }
+                                                                                    }
+                                                                        }
+                                                      }
+                                          },
+                  "/dashboard/services":  {
+                                              "get":  {
+                                                          "tags":  [
+                                                                       "Dashboard"
+                                                                   ],
+                                                          "summary":  "Get Dashboard Services",
+                                                          "description":  "Return service-level statistics from persisted telemetry.",
+                                                          "operationId":  "get_dashboard_services_dashboard_services_get",
+                                                          "responses":  {
+                                                                            "200":  {
+                                                                                        "description":  "Successful Response",
+                                                                                        "content":  {
+                                                                                                        "application/json":  {
+                                                                                                                                 "schema":  {
+
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                    }
+                                                                                    }
+                                                                        }
+                                                      }
+                                          },
+                  "/dashboard/topology":  {
+                                              "get":  {
+                                                          "tags":  [
+                                                                       "Dashboard"
+                                                                   ],
+                                                          "summary":  "Get Dashboard Topology",
+                                                          "description":  "Return the actual service topology stored in Neo4j.",
+                                                          "operationId":  "get_dashboard_topology_dashboard_topology_get",
+                                                          "responses":  {
+                                                                            "200":  {
+                                                                                        "description":  "Successful Response",
+                                                                                        "content":  {
+                                                                                                        "application/json":  {
+                                                                                                                                 "schema":  {
+
+                                                                                                                                            }
+                                                                                                                             }
+                                                                                                    }
+                                                                                    }
+                                                                        }
+                                                      }
+                                          }
+              },
+    "components":  {
+                       "schemas":  {
+                                       "HTTPValidationError":  {
+                                                                   "properties":  {
+                                                                                      "detail":  {
+                                                                                                     "items":  {
+                                                                                                                   "$ref":  "#/components/schemas/ValidationError"
+                                                                                                               },
+                                                                                                     "type":  "array",
+                                                                                                     "title":  "Detail"
+                                                                                                 }
+                                                                                  },
+                                                                   "type":  "object",
+                                                                   "title":  "HTTPValidationError"
+                                                               },
+                                       "LogIngestRequest":  {
+                                                                "properties":  {
+                                                                                   "timestamp":  {
+                                                                                                     "type":  "string",
+                                                                                                     "format":  "date-time",
+                                                                                                     "title":  "Timestamp"
+                                                                                                 },
+                                                                                   "service_name":  {
+                                                                                                        "type":  "string",
+                                                                                                        "maxLength":  255,
+                                                                                                        "minLength":  1,
+                                                                                                        "title":  "Service Name"
+                                                                                                    },
+                                                                                   "message":  {
+                                                                                                   "type":  "string",
+                                                                                                   "maxLength":  10000,
+                                                                                                   "minLength":  1,
+                                                                                                   "title":  "Message"
+                                                                                               },
+                                                                                   "trace_id":  {
+                                                                                                    "anyOf":  [
+                                                                                                                  {
+                                                                                                                      "type":  "string",
+                                                                                                                      "maxLength":  255
+                                                                                                                  },
+                                                                                                                  {
+                                                                                                                      "type":  "null"
+                                                                                                                  }
+                                                                                                              ],
+                                                                                                    "title":  "Trace Id"
+                                                                                                },
+                                                                                   "span_id":  {
+                                                                                                   "anyOf":  [
+                                                                                                                 {
+                                                                                                                     "type":  "string",
+                                                                                                                     "maxLength":  255
+                                                                                                                 },
+                                                                                                                 {
+                                                                                                                     "type":  "null"
+                                                                                                                 }
+                                                                                                             ],
+                                                                                                   "title":  "Span Id"
+                                                                                               },
+                                                                                   "attributes":  {
+                                                                                                      "additionalProperties":  true,
+                                                                                                      "type":  "object",
+                                                                                                      "title":  "Attributes"
+                                                                                                  }
+                                                                               },
+                                                                "type":  "object",
+                                                                "required":  [
+                                                                                 "timestamp",
+                                                                                 "service_name",
+                                                                                 "message"
+                                                                             ],
+                                                                "title":  "LogIngestRequest",
+                                                                "description":  "Incoming log telemetry."
+                                                            },
+                                       "MetricIngestRequest":  {
+                                                                   "properties":  {
+                                                                                      "timestamp":  {
+                                                                                                        "type":  "string",
+                                                                                                        "format":  "date-time",
+                                                                                                        "title":  "Timestamp"
+                                                                                                    },
+                                                                                      "service_name":  {
+                                                                                                           "type":  "string",
+                                                                                                           "maxLength":  255,
+                                                                                                           "minLength":  1,
+                                                                                                           "title":  "Service Name"
+                                                                                                       },
+                                                                                      "metric_name":  {
+                                                                                                          "type":  "string",
+                                                                                                          "maxLength":  255,
+                                                                                                          "minLength":  1,
+                                                                                                          "title":  "Metric Name"
+                                                                                                      },
+                                                                                      "metric_value":  {
+                                                                                                           "type":  "number",
+                                                                                                           "title":  "Metric Value"
+                                                                                                       },
+                                                                                      "attributes":  {
+                                                                                                         "additionalProperties":  true,
+                                                                                                         "type":  "object",
+                                                                                                         "title":  "Attributes"
+                                                                                                     }
+                                                                                  },
+                                                                   "type":  "object",
+                                                                   "required":  [
+                                                                                    "timestamp",
+                                                                                    "service_name",
+                                                                                    "metric_name",
+                                                                                    "metric_value"
+                                                                                ],
+                                                                   "title":  "MetricIngestRequest",
+                                                                   "description":  "Incoming metric telemetry."
+                                                               },
+                                       "TraceIngestRequest":  {
+                                                                  "properties":  {
+                                                                                     "trace_id":  {
+                                                                                                      "type":  "string",
+                                                                                                      "maxLength":  255,
+                                                                                                      "minLength":  1,
+                                                                                                      "title":  "Trace Id"
+                                                                                                  },
+                                                                                     "span_id":  {
+                                                                                                     "type":  "string",
+                                                                                                     "maxLength":  255,
+                                                                                                     "minLength":  1,
+                                                                                                     "title":  "Span Id"
+                                                                                                 },
+                                                                                     "parent_span_id":  {
+                                                                                                            "anyOf":  [
+                                                                                                                          {
+                                                                                                                              "type":  "string",
+                                                                                                                              "maxLength":  255
+                                                                                                                          },
+                                                                                                                          {
+                                                                                                                              "type":  "null"
+                                                                                                                          }
+                                                                                                                      ],
+                                                                                                            "title":  "Parent Span Id"
+                                                                                                        },
+                                                                                     "service_name":  {
+                                                                                                          "type":  "string",
+                                                                                                          "maxLength":  255,
+                                                                                                          "minLength":  1,
+                                                                                                          "title":  "Service Name"
+                                                                                                      },
+                                                                                     "operation_name":  {
+                                                                                                            "type":  "string",
+                                                                                                            "maxLength":  255,
+                                                                                                            "minLength":  1,
+                                                                                                            "title":  "Operation Name"
+                                                                                                        },
+                                                                                     "timestamp":  {
+                                                                                                       "type":  "string",
+                                                                                                       "format":  "date-time",
+                                                                                                       "title":  "Timestamp"
+                                                                                                   },
+                                                                                     "duration_ms":  {
+                                                                                                         "type":  "number",
+                                                                                                         "minimum":  0.0,
+                                                                                                         "title":  "Duration Ms"
+                                                                                                     },
+                                                                                     "status":  {
+                                                                                                    "type":  "string",
+                                                                                                    "enum":  [
+                                                                                                                 "UNSET",
+                                                                                                                 "OK",
+                                                                                                                 "ERROR"
+                                                                                                             ],
+                                                                                                    "title":  "Status",
+                                                                                                    "default":  "UNSET"
+                                                                                                },
+                                                                                     "attributes":  {
+                                                                                                        "additionalProperties":  true,
+                                                                                                        "type":  "object",
+                                                                                                        "title":  "Attributes"
+                                                                                                    }
+                                                                                 },
+                                                                  "type":  "object",
+                                                                  "required":  [
+                                                                                   "trace_id",
+                                                                                   "span_id",
+                                                                                   "service_name",
+                                                                                   "operation_name",
+                                                                                   "timestamp",
+                                                                                   "duration_ms"
+                                                                               ],
+                                                                  "title":  "TraceIngestRequest",
+                                                                  "description":  "Incoming distributed trace/span telemetry."
+                                                              },
+                                       "ValidationError":  {
+                                                               "properties":  {
+                                                                                  "loc":  {
+                                                                                              "items":  {
+                                                                                                            "anyOf":  [
+                                                                                                                          {
+                                                                                                                              "type":  "string"
+                                                                                                                          },
+                                                                                                                          {
+                                                                                                                              "type":  "integer"
+                                                                                                                          }
+                                                                                                                      ]
+                                                                                                        },
+                                                                                              "type":  "array",
+                                                                                              "title":  "Location"
+                                                                                          },
+                                                                                  "msg":  {
+                                                                                              "type":  "string",
+                                                                                              "title":  "Message"
+                                                                                          },
+                                                                                  "type":  {
+                                                                                               "type":  "string",
+                                                                                               "title":  "Error Type"
+                                                                                           },
+                                                                                  "input":  {
+                                                                                                "title":  "Input"
+                                                                                            },
+                                                                                  "ctx":  {
+                                                                                              "type":  "object",
+                                                                                              "title":  "Context"
+                                                                                          }
+                                                                              },
+                                                               "type":  "object",
+                                                               "required":  [
+                                                                                "loc",
+                                                                                "msg",
+                                                                                "type"
+                                                                            ],
+                                                               "title":  "ValidationError"
+                                                           }
+                                   }
+                   }
+}

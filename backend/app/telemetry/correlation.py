@@ -13,8 +13,8 @@ class CorrelationResult(BaseModel):
     normalized telemetry events.
     """
 
-    source_event_id: UUID
-    target_event_id: UUID
+    source_event_id: int | UUID
+    target_event_id: int | UUID
 
     correlation_type: Literal[
         "trace_id",

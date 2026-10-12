@@ -48,6 +48,27 @@ TraceRCA AI is an observability and root-cause-analysis (RCA) platform for distr
   - [Dashboard Integration Direction](#dashboard-integration-direction)
   - [Topology Testing & Verification](#topology-testing--verification)
   - [Topology Roadmap](#topology-roadmap)
+- [Basic Anomaly Detection](#basic-anomaly-detection)
+  - [Anomaly Detection Objective](#anomaly-detection-objective)
+  - [Anomaly Contract](#anomaly-contract)
+  - [Latency Anomaly Detection](#latency-anomaly-detection)
+  - [Error-Rate Anomaly Detection](#error-rate-anomaly-detection)
+  - [Metric Anomaly Detection](#metric-anomaly-detection)
+  - [Unified Anomaly Detection Service](#unified-anomaly-detection-service)
+  - [Anomaly Detection Testing & Verification](#anomaly-detection-testing--verification)
+  - [Part 1 Final Output](#part-1-final-output)
+  - [Anomaly Detection Roadmap](#anomaly-detection-roadmap)
+- [Dashboard](#dashboard)
+  - [Dashboard Data Flow & Architecture](#dashboard-data-flow--architecture)
+  - [Architecture Layers](#architecture-layers)
+  - [Design Principles](#design-principles)
+  - [Storage Responsibilities](#storage-responsibilities)
+  - [Dashboard Sections → Data Source](#dashboard-sections--data-source)
+  - [Dashboard API Contracts](#dashboard-api-contracts)
+  - [Frontend Structure](#frontend-structure)
+  - [Demo Microservice](#demo-microservice)
+  - [Dashboard Roadmap](#dashboard-roadmap)
+- [Part 1 Final Verification](#part-1-final-verification)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
 - [Testing](#testing)
@@ -158,11 +179,11 @@ flowchart TD
 
 ## Project Status
 
-**Active development — Part 1 (Observability Foundation).**
+**Part 1 (Observability Foundation) is complete.**
 
 | Part | Status |
 |---|---|
-| Part 1 — Observability Foundation | 🔄 In progress — ingestion, normalization, correlation, and service topology complete |
+| Part 1 — Observability Foundation | ✅ Complete — ingestion, normalization, correlation, service topology, and anomaly detection complete |
 | Part 2 — AI Root Cause Intelligence | ⏳ Planned |
 | Part 3 — Auto-Healing & Production | ⏳ Planned |
 
@@ -176,6 +197,8 @@ flowchart TD
 | Telemetry Normalization | ✅ Complete |
 | Telemetry Correlation | ✅ Complete |
 | Service Topology + Neo4j | ✅ Complete |
+| Basic Anomaly Detection | ✅ Complete |
+| Dashboard | 🔄 In progress — architecture, API contracts, and topology view verified |
 
 ---
 
@@ -1206,311 +1229,441 @@ Service topology completes the structural foundation required by the later RCA a
 
 ---
 
-Inspect M8 Output & Freeze Anomaly Contract
-Do not write code yet. First, we define exactly what TraceRCA considers an anomaly.
-1. What M8 currently gives us
-Our pipeline now has:
-OpenTelemetry
-      ↓
-Telemetry Ingestion
-      ↓
-Normalization (M6)
-      ↓
-Correlation (M7)
-      ↓
-Service Topology (M8)
-      ↓
-Neo4j
+## Basic Anomaly Detection
 
-M8 gives us information such as:
-- Services
-- Service timestamps
-- Service dependencies
-- Trace relationships
-- Dependency graph
-For M9, we use this foundation to detect abnormal behavior.
-2. What is an anomaly in TraceRCA?
-For Part 1, we'll define an anomaly as:
-A telemetry observation whose behavior significantly deviates from the expected behavior of a service.
+**Status:** ✅ Complete
 
-We'll initially detect three important types:
-Anomaly	Example
-Latency anomaly	A service normally responds in 100 ms but suddenly takes 900 ms
-Error-rate anomaly	A service normally has 1% errors but suddenly reaches 30%
-Metric anomaly	CPU normally stays around 40% but suddenly reaches 95%
+Completes the final layer of the Part 1 Observability Foundation by detecting abnormal behavior across latency, error rates, and telemetry metrics.
 
+### Anomaly Detection Objective
 
-This is deliberately basic anomaly detection for Part 1.
-We are not yet doing sophisticated ML-based anomaly detection.
-3. M9 anomaly contract
-Every detected anomaly should contain at least:
+The anomaly detection layer compares observed telemetry behavior against an expected baseline:
+
+```text
+Observed Telemetry
+        ↓
+Expected Baseline
+        ↓
+Deviation Calculation
+        ↓
+Threshold Evaluation
+        ↓
 Anomaly
+```
+
+An anomaly is defined as a telemetry observation whose behavior significantly deviates from the expected behavior of a service. The initial implementation deliberately uses simple, explainable threshold-based detection rather than machine-learning-based anomaly detection — this keeps the system explainable, which matters later when anomaly detection feeds into RCA:
+
+```mermaid
+flowchart TD
+    OB[Observed behavior] --> CMP[Compare with baseline]
+    CMP --> DEV[Calculate deviation]
+    DEV --> THR[Apply threshold]
+    THR --> Q{Anomaly?}
+    Q -- Yes --> A[Anomaly]
+    Q -- No --> N[Normal]
+```
+
+Three anomaly types are detected:
+
+| Anomaly | Example |
+|---|---|
+| Latency anomaly | A service normally responds in 100 ms but suddenly takes 900 ms |
+| Error-rate anomaly | A service normally has 1% errors but suddenly reaches 30% |
+| Metric anomaly | CPU normally stays around 40% but suddenly reaches 95% |
+
+### Anomaly Contract
+
+Every detected anomaly contains:
+
+| Field | Purpose |
+|---|---|
+| `anomaly_id` | Unique anomaly identifier |
+| `service_name` | Service where the anomaly occurred |
+| `anomaly_type` | `LATENCY`, `ERROR_RATE`, or `METRIC` |
+| `timestamp` | Time of the detected anomaly |
+| `observed_value` | Actual observed value |
+| `expected_value` | Expected baseline value |
+| `severity` | `LOW`, `MEDIUM`, or `HIGH` |
+| `description` | Human-readable explanation |
+
+### Latency Anomaly Detection
+
+Latency anomalies compare observed trace duration against an expected latency baseline:
+
+```text
+deviation = |observed - expected| / expected
+```
+
+| Deviation | Severity |
+|---|---|
+| < 50% | Normal |
+| 50% – <100% | LOW |
+| 100% – <200% | MEDIUM |
+| ≥ 200% | HIGH |
+
+```text
+Expected = 100 ms, Observed = 180 ms, Deviation = 80%   → LOW
+Expected = 100 ms, Observed = 250 ms, Deviation = 150%  → MEDIUM
+Expected = 100 ms, Observed = 350 ms, Deviation = 250%  → HIGH
+```
+
+Invalid values such as a zero expected latency (which would require dividing by zero) or a negative observed latency are rejected.
+
+### Error-Rate Anomaly Detection
+
+Error-rate anomalies compare the observed error rate against the expected error-rate baseline, using percentage-point deviation rather than relative deviation:
+
+```text
+deviation = |observed_error_rate - expected_error_rate|
+```
+
+| Deviation | Severity |
+|---|---|
+| < 5 percentage points | Normal |
+| 5 – <10 | LOW |
+| 10 – <20 | MEDIUM |
+| ≥ 20 | HIGH |
+
+```text
+Expected error rate = 2%, Observed = 15%  → deviation = 13 points → MEDIUM
+Expected error rate = 2%, Observed = 4%   → deviation = 2 points  → Normal
+```
+
+Observed and expected error rates must be between 0 and 100.
+
+### Metric Anomaly Detection
+
+Metric anomalies use relative deviation from an expected baseline and apply to numeric metrics such as CPU utilization, memory usage, request counts, and similar telemetry values:
+
+```text
+deviation = |observed - expected| / |expected|
+```
+
+| Deviation | Severity |
+|---|---|
+| < 50% | Normal |
+| 50% – <100% | LOW |
+| 100% – <200% | MEDIUM |
+| ≥ 200% | HIGH |
+
+```text
+Expected CPU = 40, Observed CPU = 100, Deviation = 150% → MEDIUM
+```
+
+A zero expected metric value is rejected, since relative deviation cannot be calculated against it.
+
+### Unified Anomaly Detection Service
+
+The three detectors are exposed through a single service:
+
+```mermaid
+flowchart TD
+    NT[Normalized Telemetry] --> SVC[AnomalyDetectionService]
+    SVC --> LD[Latency Detector]
+    SVC --> ED[Error-Rate Detector]
+    SVC --> MD[Metric Detector]
+    LD --> A[Anomaly]
+    ED --> A
+    MD --> A
+```
+
+This gives the anomaly-detection layer one consistent entry point and prepares its output for the later RCA pipeline. It was implemented alongside the three detectors in:
+
+```text
+backend/app/telemetry/
+├── anomaly.py
+├── anomaly_detector.py
+└── anomaly_service.py
+```
+
+### Anomaly Detection Testing & Verification
+
+```bash
+pytest -q tests/test_anomaly_detection.py
+```
+
+**19 tests passed**, covering: normal latency behavior; low, medium, and high latency anomalies; invalid latency values; normal error-rate behavior; low, medium, and high error-rate anomalies; invalid error-rate values; normal metric behavior; low, medium, and high metric anomalies; invalid metric values; and the unified anomaly detection service.
+
+A full regression run was then executed across the entire project:
+
+```bash
+pytest -q
+```
+
+**111 passed, 6 warnings** — the warnings are dependency/deprecation warnings and did not cause test failures.
+
+### Part 1 Final Output
+
+With anomaly detection complete, the Part 1 observability pipeline is:
+
+```mermaid
+flowchart TD
+    OT[OpenTelemetry] --> ING[Telemetry Ingestion]
+    ING --> NORM[Telemetry Normalization]
+    NORM --> CORR[Telemetry Correlation]
+    CORR --> TOPO[Service Topology]
+    TOPO --> N4J[(Neo4j)]
+    N4J --> ANOM[Anomaly Detection]
+    ANOM --> EV[Anomaly Evidence]
+```
+
+Part 1 now provides the structured observability foundation required by the AI Root Cause Intelligence layer in Part 2.
+
+### Anomaly Detection Roadmap
+
+| Task | Status |
+|---|---|
+| Inspect topology output and freeze anomaly contract | ✅ Complete |
+| Define anomaly schema | ✅ Complete |
+| Implement latency anomaly detection | ✅ Complete |
+| Implement error-rate anomaly detection | ✅ Complete |
+| Implement metric anomaly detection | ✅ Complete |
+| Build unified anomaly detection service | ✅ Complete |
+| Add anomaly detection tests | ✅ Complete |
+| Final verification & documentation closeout | ✅ Complete |
+
+---
+
+## Dashboard
+
+**Status:** 🔄 In progress
+
+With Part 1's observability foundation complete, a dashboard is being added so the ingested, normalized, correlated, topology, and anomaly data can actually be seen and explored. The dashboard reuses Part 1's existing services rather than duplicating their logic or introducing fake data.
+
+### Dashboard Data Flow & Architecture
+
+```mermaid
+flowchart TD
+    T[Test Microservices] --> OT[OpenTelemetry]
+    OT --> P1["TraceRCA Part 1 (Ingestion → Normalization → Correlation → Topology → Anomaly Detection)"]
+    P1 --> PG[(PostgreSQL / Redis)]
+    P1 --> N4J[(Neo4j)]
+    PG --> API[FastAPI Dashboard APIs]
+    N4J --> API
+    API --> UI[Next.js Dashboard]
+```
+
+A firm rule governs this flow: the Next.js frontend never talks directly to PostgreSQL, Redis, or Neo4j. Everything goes through FastAPI:
+
+```mermaid
+flowchart LR
+    UI[Next.js] --> API[FastAPI]
+    API --> SVC[TraceRCA Data Layer]
+    SVC --> DB[(PostgreSQL / Redis / Neo4j)]
+```
+
+### Architecture Layers
+
+| Layer | Responsibility |
+|---|---|
+| **Presentation** — Next.js | Dashboard, Traces, Logs, Metrics, Topology, Anomalies, Service pages |
+| **API** — FastAPI | Dashboard endpoints, request validation, response schemas |
+| **TraceRCA Services** | Telemetry, normalization, correlation, topology, anomaly detection (all from Part 1) |
+| **Data** | PostgreSQL, Redis, Neo4j |
+
+```mermaid
+flowchart TD
+    UI[Next.js] --> RTR[Dashboard API Router]
+    RTR --> SVC[Dashboard Service]
+    SVC --> PG[(PostgreSQL)]
+    SVC --> N4J[(Neo4j)]
+    SVC --> ANOM[M9 Anomaly Results]
+```
+
+### Design Principles
+
+- The frontend never accesses PostgreSQL, Redis, or Neo4j directly — only through FastAPI.
+- The dashboard does not duplicate or change Part 1 logic; it adds a thin **Dashboard Router** and **Dashboard Service** on top of it.
+- No endpoint returns hard-coded or fake data — each one is mapped to a real, existing Part 1 source before it's built.
+- A query/repository layer for dashboard-style reads didn't previously exist (ingestion and normalization only wrote and transformed `TelemetryEvent`, never queried it back), so a small read-only dashboard service layer was introduced rather than placing SQL queries directly in the API routes.
+
+### Storage Responsibilities
+
+| Storage | Dashboard responsibility |
+|---|---|
+| PostgreSQL | Persistent telemetry/event information |
+| Redis | Fast/temporary data and caching where already used |
+| Neo4j | Service topology and dependency relationships |
+
+The dashboard does not introduce another database.
+
+### Dashboard Sections → Data Source
+
+| Dashboard section | Source |
+|---|---|
+| Overview statistics | TraceRCA backend/storage (aggregated) |
+| Traces | Normalized trace telemetry |
+| Logs | Normalized log telemetry |
+| Metrics | Normalized metric telemetry |
+| Topology | Topology service → Neo4j |
+| Anomalies | Anomaly detection output |
+| Service details | Combination of existing telemetry, topology, and anomaly data |
+| Trace details | Trace/span data |
+| Root Cause | Part 2 — placeholder |
+| Auto-Healing | Part 3 — placeholder |
+
+### Dashboard API Contracts
+
+| Endpoint | Purpose | Real source |
+|---|---|---|
+| `GET /dashboard/overview` | Overall system summary | PostgreSQL + topology + anomaly results |
+| `GET /dashboard/services` | List monitored services | PostgreSQL / topology |
+| `GET /dashboard/topology` | Service dependency graph | Neo4j / `TopologyService` |
+| `GET /dashboard/traces` | Trace events | `TelemetryEvent` |
+| `GET /dashboard/logs` | Log events | `TelemetryEvent` |
+| `GET /dashboard/metrics` | Metric events | `TelemetryEvent` |
+| `GET /dashboard/anomalies` | Detected anomalies | Anomaly detection output |
+| `GET /dashboard/services/{service_name}` | Service investigation | Combined existing data |
+
+Representative response shapes:
+
+```json
+// GET /dashboard/traces
+{
+  "items": [
+    {
+      "trace_id": "...", "span_id": "...", "parent_span_id": "...",
+      "service_name": "...", "operation_name": "...", "timestamp": "...",
+      "duration_ms": 120.5, "status": "OK"
+    }
+  ]
+}
+```
+
+```json
+// GET /dashboard/logs
+{
+  "items": [
+    { "timestamp": "...", "service_name": "...", "message": "...", "trace_id": "...", "span_id": "..." }
+  ]
+}
+```
+
+```json
+// GET /dashboard/metrics
+{
+  "items": [
+    { "timestamp": "...", "service_name": "...", "metric_name": "...", "metric_value": 42.5 }
+  ]
+}
+```
+
+```json
+// GET /dashboard/anomalies
+{
+  "items": [
+    {
+      "anomaly_id": "...", "service_name": "payment-service", "anomaly_type": "LATENCY",
+      "timestamp": "...", "observed_value": 800, "expected_value": 100,
+      "severity": "HIGH", "description": "..."
+    }
+  ]
+}
+```
+
+`/dashboard/topology` reuses the existing `TopologyResponse` (`services` + `dependencies`) rather than inventing a second topology structure. A few deliberate omissions and open items from this contract:
+
+- `/dashboard/logs` does not include a `level` field, since the current log schema doesn't guarantee one.
+- The retrieval/persistence mechanism behind `/dashboard/anomalies` isn't finalized yet — anomaly detection exists but isn't currently wired into an application flow that persists its results, so this is marked as an open item for end-to-end integration rather than papered over with a fake table.
+- Telemetry endpoints are planned to eventually support `service_name`, `start_time`, `end_time`, `limit`, and `offset` query parameters (e.g. `GET /dashboard/traces?service_name=payment-service`), added once the basic real-data endpoints are in place.
+
+### Frontend Structure
+
+```text
+Next.js
 │
-├── anomaly_id
-├── service_name
-├── anomaly_type
-├── timestamp
-├── observed_value
-├── expected_value
-├── severity
-└── description
+├── App Layout
+│   ├── Sidebar
+│   ├── Topbar
+│   └── Main Content
+│
+├── Dashboard
+├── Traces
+├── Logs
+├── Metrics
+├── Topology
+├── Anomalies
+├── Root Cause
+├── Auto-Healing
+├── Alerts
+└── Settings
+```
 
-We'll use three anomaly types:
-LATENCY
-ERROR_RATE
-METRIC
+### Demo Microservice
 
-And three severity levels:
-LOW
-MEDIUM
-HIGH
+A small demo microservice generates synthetic traces, logs, and metrics (including parent-child span relationships) against the Telemetry Ingestion API, so the dashboard — topology in particular — can be verified against real, flowing telemetry rather than fixtures.
 
-4. Detection rules
-We'll start with simple, explainable rules.
-Latency
-Compare the current latency against a baseline.
-Example:
-Expected latency = 100 ms
-Observed latency = 500 ms
+```bash
+cd demo-microservice
+.\.venv\Scripts\Activate.ps1
+uvicorn main:app --reload --port 8001
+```
 
-The detector determines whether the deviation is large enough to classify it as an anomaly.
-Error rate
-Calculate:
-error_rate =
-number of failed requests
--------------------------
-total requests
+### Dashboard Roadmap
 
-Example:
-100 requests
-30 errors
+| Task | Status |
+|---|---|
+| Freeze dashboard requirements | ✅ Complete |
+| Define dashboard architecture | ✅ Complete |
+| Define API contracts | ✅ Complete |
+| Define frontend pages/components | ✅ Complete |
+| Dashboard backend APIs | 🔄 In progress — topology endpoint verified end to end |
+| Next.js dashboard | 🔄 In progress — topology view verified |
+| Test microservices | ✅ Complete — demo microservice producing synthetic telemetry |
+| End-to-end integration | 🔄 In progress — topology verified; full pipeline not yet verified |
+| Dashboard polish | ⏳ Planned |
 
-error rate = 30%
+---
 
-If this is significantly higher than the baseline, we generate an anomaly.
-Metrics
-For metrics such as CPU utilization:
-Expected CPU = 40%
-Observed CPU = 95%
+## Part 1 Final Verification
 
-The deviation can trigger a metric anomaly.
-5. Important design decision
-We should not say:
-"Any high value is an anomaly."
+**Status:** ✅ Complete
 
-Instead:
-Observed behavior
-       ↓
-Compare with baseline
-       ↓
-Calculate deviation
-       ↓
-Apply threshold
-       ↓
-Anomaly?
-   ↙       ↘
- YES       NO
+All of Part 1's observability layers — telemetry ingestion, normalization, correlation, service topology, and basic anomaly detection — are implemented and verified together.
 
-This will make the system explainable, which is important later when we connect anomaly detection to RCA.
-M9.1 status
-So our first step is now conceptually frozen:
-TraceRCA detects latency, error-rate, and metric anomalies by comparing observed telemetry behavior against an expected baseline and assigning a severity based on the deviation.
+### Final Test Results
 
+| Verification | Result |
+|---|---|
+| Complete project test suite | 112 passed |
+| Focused ingestion and topology tests | 18 passed |
+| Dashboard topology integration | Verified visually |
+| Neo4j service and dependency graph | Verified |
+| Repeated service-node upsert regression test | Passed |
 
-Latency Anomaly Detection
-Now we'll implement the first actual detector.
-The idea will be:
-Trace events
-    ↓
-Get duration
-    ↓
-Compare with baseline
-    ↓
-Calculate deviation
-    ↓
-Check threshold
-    ↓
-Anomaly / Normal
+### Verified Dashboard Topology
 
-Latency Anomaly Detection.
-We will keep this step simple and explainable.
-1. What are we detecting?
-Our normalized trace telemetry already contains:
-duration_ms
-service_name
-timestamp
+The dashboard successfully displays three services — `api-gateway`, `demo-payment-service`, `payment-service` — and two observed dependencies: `api-gateway → demo-payment-service` and `api-gateway → payment-service`. The dependency between `api-gateway` and `demo-payment-service` was verified using synthetic parent-child trace spans submitted by the demo microservice.
 
-So for each service, we can compare an observed trace duration with an expected latency baseline.
-For example:
-Expected latency = 100 ms
-Observed latency = 250 ms
+### Verified Data Flow
 
-The deviation is:
-(250 - 100) / 100 × 100 = 150%
+```mermaid
+flowchart TD
+    DM[Demo Microservice] --> ST[Synthetic Traces, Logs, Metrics]
+    ST --> ING[Telemetry Ingestion API]
+    ING --> PG[(PostgreSQL Persistence)]
+    PG --> NORM[Telemetry Normalization]
+    NORM --> TOPO[Service Topology Construction]
+    TOPO --> N4J[(Neo4j Service Dependency Graph)]
+    N4J --> API[FastAPI Dashboard Endpoint]
+    API --> UI[Next.js Dashboard]
+```
 
-That is a significant increase.
-2. Rule for M9.3
-For our basic detector, let's use a percentage-based threshold:
-deviation = |observed - expected| / expected
+### Known Limitations
 
-We'll classify:
-Deviation	Severity
-< 50%	Normal
-50% – <100%	LOW
-100% – <200%	MEDIUM
-≥ 200%	HIGH
+- The demo microservice currently generates synthetic parent-child span relationships. Automatic distributed tracing across real HTTP calls between independently running services has not yet been fully verified.
+- The topology verification confirms dependency discovery and visualization; it does not establish that the complete root-cause analysis pipeline works end to end.
+- Basic anomaly detection is implemented, but its integration into a complete incident investigation workflow remains future work.
+- Graph RAG, advanced causal inference, evidence-based root-cause analysis, and blast-radius analysis belong to Part 2.
+- Remediation recommendations, controlled auto-healing, and production hardening belong to Part 3.
 
+### Next Development Phase
 
-So:
-Expected = 100 ms
-Observed = 180 ms
-Deviation = 80%
-→ LOW
+**Part 2 — AI Root Cause Intelligence**
 
-Expected = 100 ms
-Observed = 250 ms
-Deviation = 150%
-→ MEDIUM
+The next phase builds on the completed observability foundation to connect correlated telemetry, service dependencies, temporal evidence, and causal inference into an explainable root-cause analysis workflow.
 
-Expected = 100 ms
-Observed = 350 ms
-Deviation = 250%
-→ HIGH
-
-3. One important edge case
-If:
-expected_value = 0
-
-we cannot calculate the percentage deviation because that would require division by zero.
-
-
-Error-Rate Anomaly Detection.
-We'll follow the same principle as latency: simple, explainable, threshold-based detection.
-1. What are we detecting?
-For a service:
-total requests = 100
-failed requests = 25
-
-The error rate is:
-25 / 100 × 100 = 25%
-
-We'll compare the observed error rate with the expected baseline.
-2. M9.4 rules
-We'll use percentage-point deviation from the expected error rate:
-Deviation from baseline	Severity
-< 5 percentage points	Normal
-5 – <10	LOW
-10 – <20	MEDIUM
-≥20	HIGH
-
-
-Example:
-Expected error rate = 2%
-Observed error rate = 15%
-
-Deviation = 13 percentage points
-→ MEDIUM
-
-rror-Rate Anomaly Detection is working correctly.
-Your results match the contract:
-Test 1 — Error-rate anomaly
-Expected = 2%
-Observed = 15%
-
-Deviation = 13 percentage points
-Severity = MEDIUM
-
-The detector correctly generated an ERROR_RATE anomaly.
-Test 2 — Normal
-Expected = 2%
-Observed = 4%
-
-Deviation = 2 percentage points
-
-Below our 5-point threshold, so:
-None
-
-Correct. ✅
-
-Metric Anomaly Detection.
-This will handle metrics such as:
-- CPU utilization
-- Memory utilization
-- Request count
-- Queue size
-- Any other numeric metric from OpenTelemetry
-1. Detection rule
-Unlike error rate, metrics can have different units, so we'll use relative percentage deviation, just like latency.
-deviation = |observed - expected| / expected
-
-We'll use:
-Deviation	Result
-< 50%	Normal
-50% – <100%	LOW
-100% – <200%	MEDIUM
-≥ 200%	HIGH
-
-
-For example:
-Expected CPU = 40
-Observed CPU = 100
-
-Deviation = 150%
-→ MEDIUM
-
-
-Unified Anomaly Detection Service
-This is where we'll bring the three detectors together:
-Unified Anomaly Detection Service.
-The goal is to have one entry point that chooses the correct detector based on the telemetry type.
-
-                 Normalized Telemetry
-                         ↓
-              Anomaly Detection Service
-                  ↙       ↓       ↘
-             Latency   Error Rate   Metric
-                ↓         ↓          ↓
-                    Anomaly
-
-
-Normalized Telemetry
-        │
-        ▼
-AnomalyDetectionService
-        │
-        ├── Latency ──────► Latency Detector
-        │
-        ├── Error Rate ───► Error Detector
-        │
-        └── Metric ───────► Metric Detector
-                              │
-                              ▼
-                           Anomaly
-
-Automated Tests
-Now we'll convert the manual checks we've been doing into proper pytest tests.
-We'll test:
-- Normal latency
-- Low/medium/high latency anomalies
-- Invalid latency input
-- Normal error rate
-- Low/medium/high error-rate anomalies
-- Invalid error-rate input
-- Normal metrics
-- Low/medium/high metric anomalies
-- Invalid metric input
-- Unified service behavior
-
-### Anomaly Detection and services Roadmap
-Step	Status
-M9.1 — Inspect M8 output & freeze anomaly contract	✅ DONE
-M9.2 — Define anomaly schema	✅ DONE
-M9.3 — Latency anomaly detection	✅ DONE
-M9.4 — Error-rate anomaly detection	✅ DONE
-M9.5 — Metric anomaly detection	✅ DONE
-M9.6 — Unified anomaly detection service	✅ DONE
-M9.7 — Tests	✅ DONE
-M9.8 — Final verification + README	✅ DONE
+---
 
 ## Project Structure
 
@@ -1529,6 +1682,9 @@ TraceRCA-AI/
 │   │   │   └── redis_client.py
 │   │   ├── core/
 │   │   │   └── config.py
+│   │   ├── dashboard/
+│   │   │   ├── router.py
+│   │   │   └── service.py
 │   │   ├── db/
 │   │   │   ├── base.py
 │   │   │   ├── database.py
@@ -1537,12 +1693,26 @@ TraceRCA-AI/
 │   │   └── telemetry/
 │   │       ├── models.py
 │   │       ├── tracing.py
+│   │       ├── schemas.py
+│   │       ├── service.py
+│   │       ├── normalized.py
 │   │       ├── normalizers.py
+│   │       ├── correlation.py
+│   │       ├── correlation_service.py
+│   │       ├── topology.py
 │   │       ├── topology_service.py
-│   │       └── topology_builder.py
+│   │       ├── topology_builder.py
+│   │       ├── anomaly.py
+│   │       ├── anomaly_detector.py
+│   │       └── anomaly_service.py
 │   └── alembic/
 │       ├── env.py
 │       └── versions/
+├── demo-microservice/
+│   └── main.py
+├── frontend/              # Next.js dashboard (Dashboard, Traces, Logs,
+│                           # Metrics, Topology, Anomalies, Root Cause,
+│                           # Auto-Healing, Alerts, Settings)
 ├── tests/
 │   ├── test_health.py
 │   ├── test_database_connection.py
@@ -1559,7 +1729,8 @@ TraceRCA-AI/
 │   ├── test_normalization_service.py
 │   ├── test_correlation.py
 │   ├── test_topology.py
-│   └── test_topology_service.py
+│   ├── test_topology_service.py
+│   └── test_anomaly_detection.py
 ├── docs/
 ├── scripts/
 ├── .env.example
@@ -1594,6 +1765,16 @@ docker start tracerca-neo4j
 uvicorn backend.app.main:app --reload
 ```
 
+### Running the Demo Microservice (optional)
+
+To exercise the dashboard with real, flowing telemetry instead of fixtures, run the demo microservice in a second terminal:
+
+```powershell
+cd demo-microservice
+.\.venv\Scripts\Activate.ps1
+uvicorn main:app --reload --port 8001
+```
+
 ### Troubleshooting (Windows)
 
 If `docker` commands aren't recognized in PowerShell, add Docker to the `PATH` for the current session:
@@ -1622,9 +1803,7 @@ pytest -q tests/test_correlation.py
 
 # Run the topology tests
 pytest -q tests/test_topology.py tests/test_topology_service.py
+
+# Run the anomaly detection tests
+pytest -q tests/test_anomaly_detection.py
 ```
-
-
-#docker issue command
-
-(.venv) PS C:\Users\Kuldeeep Singh\TraceRCA-AI> $env:Path += ";C:\Program Files\Docker\Docker\resources\bin"

@@ -341,6 +341,58 @@ async def test_get_topology():
 
         await neo4j_connection.close()
 
+
+
+@pytest.mark.asyncio
+async def test_repeated_service_upserts_keep_one_node_and_update_timestamps():
+    await neo4j_connection.connect()
+
+    service_name = f"test-upsert-{uuid4().hex}"
+    first_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    middle_time = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    last_time = datetime(2026, 1, 3, tzinfo=timezone.utc)
+
+    try:
+        # Deliberately insert timestamps out of chronological order.
+        for timestamp in (middle_time, first_time, last_time):
+            await topology_service.upsert_service_node(
+                ServiceNode(
+                    service_name=service_name,
+                    first_seen=timestamp,
+                    last_seen=timestamp,
+                )
+            )
+
+        async with neo4j_connection.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (s:Service {service_name: $service_name})
+                RETURN
+                    count(s) AS node_count,
+                    min(s.first_seen) AS first_seen,
+                    max(s.last_seen) AS last_seen
+                """,
+                service_name=service_name,
+            )
+            record = await result.single()
+
+        assert record is not None
+        assert record["node_count"] == 1
+        assert record["first_seen"].to_native() == first_time
+        assert record["last_seen"].to_native() == last_time
+
+    finally:
+        async with neo4j_connection.driver.session() as session:
+            await session.run(
+                """
+                MATCH (s:Service {service_name: $service_name})
+                DETACH DELETE s
+                """,
+                service_name=service_name,
+            )
+        await neo4j_connection.close()
+
+
 """
 Result:
 2 passed

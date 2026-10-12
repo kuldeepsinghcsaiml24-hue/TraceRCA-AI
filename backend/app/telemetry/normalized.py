@@ -9,11 +9,11 @@ class NormalizedTelemetry(BaseModel):
     """
     Common internal representation for normalized telemetry.
 
-    This schema provides a unified structure for traces, logs,
-    and metrics before they enter the RCA pipeline.
+    Provides a unified structure for traces, logs, and metrics
+    before they enter the RCA pipeline.
     """
 
-    event_id: UUID = Field(default_factory=uuid4)
+    event_id: int | UUID = Field(default_factory=uuid4)
 
     event_type: Literal["trace", "log", "metric"]
 
@@ -78,6 +78,8 @@ class NormalizedTelemetry(BaseModel):
     def validate_non_empty_string(cls, value: Any) -> Any:
         """Reject empty or whitespace-only strings."""
         if isinstance(value, str) and not value.strip():
-            raise ValueError("Value cannot be empty or whitespace")
+            raise ValueError(
+                "Value cannot be empty or whitespace"
+            )
 
         return value
