@@ -1,4 +1,4 @@
-from functools import lru_cache
+﻿from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     otel_service_name: str = "tracerca-api"
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
+    otel_receiver_enabled: bool = False
 
     log_level: str = "INFO"
 
