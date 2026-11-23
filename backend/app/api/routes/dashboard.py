@@ -1,39 +1,65 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import distinct, func, select
+﻿from fastapi import APIRouter, Depends, HTTPException, Query, status
+from neo4j.exceptions import Neo4jError, ServiceUnavailable
+from sqlalchemy import case, distinct, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from ...db.database import get_db
 from ...db.models import TelemetryEvent
 from ...telemetry.topology_service import topology_service
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
+TESTBED_SERVICES = ("order-service", "payment-service")
+
+
+def _source_filter(source: str | None):
+    """Return an optional SQL filter for a telemetry source."""
+    if source == "testbed":
+        return TelemetryEvent.service_name.in_(TESTBED_SERVICES)
+    return None
+
 
 @router.get("/overview")
 async def get_dashboard_overview(
+    source: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Return dashboard overview from persisted telemetry."""
+    if source not in (None, "testbed"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported source. Use 'testbed' or omit the parameter.",
+        )
+
     try:
-        event_counts = await db.execute( 
+        filters = []
+        source_condition = _source_filter(source)
+        if source_condition is not None:
+            filters.append(source_condition)
+
+        event_counts = await db.execute(
             select(
                 TelemetryEvent.event_type,
                 func.count(TelemetryEvent.id),
-            ).group_by(TelemetryEvent.event_type)
+            )
+            .where(*filters)
+            .group_by(TelemetryEvent.event_type)
         )
-
         counts = {
             event_type: count
             for event_type, count in event_counts.all()
         }
 
         total_result = await db.execute(
-            select(func.count(TelemetryEvent.id))
+            select(func.count(TelemetryEvent.id)).where(*filters)
         )
         total_events = total_result.scalar_one()
 
         services_result = await db.execute(
-            select(func.count(distinct(TelemetryEvent.service_name)))
+            select(func.count(distinct(TelemetryEvent.service_name))).where(
+                *filters
+            )
         )
         service_count = services_result.scalar_one()
 
@@ -41,12 +67,14 @@ async def get_dashboard_overview(
             select(func.count(TelemetryEvent.id)).where(
                 TelemetryEvent.event_type == "trace",
                 func.upper(TelemetryEvent.status) == "ERROR",
+                *filters,
             )
         )
         error_trace_count = errors_result.scalar_one()
 
         recent_result = await db.execute(
             select(TelemetryEvent)
+            .where(*filters)
             .order_by(TelemetryEvent.timestamp.desc())
             .limit(10)
         )
@@ -54,6 +82,7 @@ async def get_dashboard_overview(
 
         return {
             "database_status": "connected",
+            "source": source or "all",
             "total_events": total_events,
             "trace_count": counts.get("trace", 0),
             "log_count": counts.get("log", 0),
@@ -87,12 +116,22 @@ async def get_dashboard_overview(
 
 @router.get("/services")
 async def get_dashboard_services(
+    source: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Return service-level statistics from persisted telemetry."""
-    from sqlalchemy import case
+    if source not in (None, "testbed"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported source. Use 'testbed' or omit the parameter.",
+        )
 
     try:
+        filters = []
+        source_condition = _source_filter(source)
+        if source_condition is not None:
+            filters.append(source_condition)
+
         result = await db.execute(
             select(
                 TelemetryEvent.service_name,
@@ -101,10 +140,7 @@ async def get_dashboard_services(
                     case(
                         (
                             (TelemetryEvent.event_type == "trace")
-                            & (
-                                func.upper(TelemetryEvent.status)
-                                == "ERROR"
-                            ),
+                            & (func.upper(TelemetryEvent.status) == "ERROR"),
                             TelemetryEvent.id,
                         )
                     )
@@ -119,6 +155,7 @@ async def get_dashboard_services(
                 ).label("average_duration_ms"),
                 func.max(TelemetryEvent.timestamp).label("last_seen"),
             )
+            .where(*filters)
             .group_by(TelemetryEvent.service_name)
             .order_by(TelemetryEvent.service_name)
         )
@@ -139,6 +176,7 @@ async def get_dashboard_services(
         ]
 
         return {
+            "source": source or "all",
             "service_count": len(services),
             "services": services,
         }
@@ -157,9 +195,8 @@ async def get_dashboard_topology():
         topology = await topology_service.get_topology()
         return topology.model_dump(mode="json")
 
-    except RuntimeError:
+    except (RuntimeError, Neo4jError, ServiceUnavailable):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Service topology is unavailable",
         )
-
