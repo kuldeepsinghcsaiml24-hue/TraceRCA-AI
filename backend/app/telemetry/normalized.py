@@ -64,6 +64,14 @@ class NormalizedTelemetry(BaseModel):
         default_factory=dict,
     )
 
+    @field_validator("timestamp")
+    @classmethod
+    def validate_timestamp_timezone(cls, value: datetime) -> datetime:
+        """Require timestamps to identify an unambiguous instant."""
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("timestamp must be timezone-aware")
+        return value
+
     @field_validator(
         "service_name",
         "operation_name",

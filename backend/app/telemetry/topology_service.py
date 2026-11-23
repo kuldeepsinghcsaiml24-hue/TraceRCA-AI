@@ -190,4 +190,97 @@ class TopologyService:
         )
 
 
+
+    async def get_incident_topology(
+        self,
+        service_name: str,
+    ) -> TopologyResponse:
+        """Retrieve a bounded topology subgraph around an incident service.
+
+        DEPENDS_ON edges point from a service to a service it depends on.
+        Traversal in both directions supplies dependency and potential
+        downstream-impact context; it does not establish causation.
+        """
+        if not service_name.strip():
+            raise ValueError("service_name cannot be empty or whitespace")
+
+        if neo4j_connection.driver is None:
+            raise RuntimeError("Neo4j connection is not initialized")
+
+        max_services = 100
+        services: list[ServiceNode] = []
+        dependencies: list[DependencyEdge] = []
+
+        async with neo4j_connection.driver.session() as session:
+            service_result = await session.run(
+                """
+                MATCH (incident:Service {service_name: $service_name})
+                OPTIONAL MATCH
+                    (incident)-[:DEPENDS_ON*1..2]-(related:Service)
+                WITH collect(DISTINCT incident) +
+                     collect(DISTINCT related) AS discovered
+                UNWIND discovered AS s
+                WITH DISTINCT s
+                ORDER BY
+                    CASE WHEN s.service_name = $service_name
+                         THEN 0 ELSE 1 END,
+                    s.service_name
+                LIMIT $max_services
+                RETURN
+                    s.service_name AS service_name,
+                    s.first_seen AS first_seen,
+                    s.last_seen AS last_seen
+                ORDER BY service_name
+                """,
+                service_name=service_name,
+                max_services=max_services,
+            )
+            service_records = await service_result.data()
+
+            for record in service_records:
+                services.append(
+                    ServiceNode(
+                        service_name=record["service_name"],
+                        first_seen=record["first_seen"].to_native(),
+                        last_seen=record["last_seen"].to_native(),
+                    )
+                )
+
+            selected_names = [
+                service.service_name for service in services
+            ]
+
+            if selected_names:
+                dependency_result = await session.run(
+                    """
+                    MATCH
+                        (source:Service)-[d:DEPENDS_ON]->(target:Service)
+                    WHERE source.service_name IN $service_names
+                      AND target.service_name IN $service_names
+                    RETURN
+                        source.service_name AS source_service,
+                        target.service_name AS target_service,
+                        d.first_seen AS first_seen,
+                        d.last_seen AS last_seen
+                    ORDER BY source_service, target_service
+                    """,
+                    service_names=selected_names,
+                )
+                dependency_records = await dependency_result.data()
+
+                for record in dependency_records:
+                    dependencies.append(
+                        DependencyEdge(
+                            source_service=record["source_service"],
+                            target_service=record["target_service"],
+                            first_seen=record["first_seen"].to_native(),
+                            last_seen=record["last_seen"].to_native(),
+                        )
+                    )
+
+        return TopologyResponse(
+            services=services,
+            dependencies=dependencies,
+        )
+
 topology_service = TopologyService()

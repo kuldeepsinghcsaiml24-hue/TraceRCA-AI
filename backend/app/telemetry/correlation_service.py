@@ -1,4 +1,4 @@
-from backend.app.telemetry.correlation import (
+﻿from backend.app.telemetry.correlation import (
     CorrelationResult,
     correlate_by_service_time,
     correlate_trace_log,
@@ -23,20 +23,24 @@ def correlate_events(
         for target in events[index + 1:]:
             result: CorrelationResult | None = None
 
-            # Trace → Log
+            # Trace â†’ Log
             if (
                 source.event_type == "trace"
                 and target.event_type == "log"
             ):
                 result = correlate_trace_log(source, target)
+                if result is None:
+                    result = correlate_by_service_time(source, target)
 
             elif (
                 source.event_type == "log"
                 and target.event_type == "trace"
             ):
                 result = correlate_trace_log(target, source)
+                if result is None:
+                    result = correlate_by_service_time(source, target)
 
-            # Trace → Metric
+            # Trace â†’ Metric
             elif (
                 source.event_type == "trace"
                 and target.event_type == "metric"

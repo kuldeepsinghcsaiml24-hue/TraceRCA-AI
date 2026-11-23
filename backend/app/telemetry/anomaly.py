@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Anomaly(BaseModel):
@@ -26,6 +26,14 @@ class Anomaly(BaseModel):
     ]
 
     timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def validate_timestamp_timezone(cls, value: datetime) -> datetime:
+        """Require timestamps to identify an unambiguous instant."""
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("timestamp must be timezone-aware")
+        return value
 
     observed_value: float
 
